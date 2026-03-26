@@ -123,6 +123,114 @@ def find_in_sheet(spreadsheet_id: str, sheet: str, query: str) -> list:
                     return results
     return results
 
+def create_sheet(spreadsheet_id: str, title: str) -> dict:
+    """在 Spreadsheet 中新建一个 sheet tab（插入到第一个位置）"""
+    url = f"{API_BASE}/{spreadsheet_id}:batchUpdate"
+    body = {
+        "requests": [
+            {
+                "addSheet": {
+                    "properties": {
+                        "title": title,
+                        "index": 0
+                    }
+                }
+            }
+        ]
+    }
+    return _api(url, method="POST", body=body)
+
+
+def format_tracking_sheet(spreadsheet_id: str, sheet_id: int, data_row_count: int, data_values: list | None = None) -> dict:
+    """为埋点 sheet 设置标准样式：表头绿底白字加粗 + 全部单元格实线边框 + 自动合并事件块"""
+    url = f"{API_BASE}/{spreadsheet_id}:batchUpdate"
+    border_style = {"style": "SOLID", "width": 1, "color": {"red": 0, "green": 0, "blue": 0}}
+    green_bg = {"red": 0.41568628, "green": 0.65882355, "blue": 0.30980393}
+    white_fg = {"red": 1, "green": 1, "blue": 1}
+    total_rows = data_row_count + 1  # header + data
+
+    requests = [
+        # 表头样式：绿色背景 + 白色加粗字体
+        {
+            "repeatCell": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1, "startColumnIndex": 0, "endColumnIndex": 9},
+                "cell": {
+                    "userEnteredFormat": {
+                        "backgroundColor": green_bg,
+                        "textFormat": {"foregroundColor": white_fg, "bold": True},
+                        "horizontalAlignment": "LEFT",
+                        "verticalAlignment": "MIDDLE"
+                    }
+                },
+                "fields": "userEnteredFormat(backgroundColor,textFormat,horizontalAlignment,verticalAlignment)"
+            }
+        },
+        # 全部有数据区域：实线边框
+        {
+            "updateBorders": {
+                "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": total_rows, "startColumnIndex": 0, "endColumnIndex": 9},
+                "top": border_style,
+                "bottom": border_style,
+                "left": border_style,
+                "right": border_style,
+                "innerHorizontal": border_style,
+                "innerVertical": border_style
+            }
+        },
+        # 冻结表头行
+        {
+            "updateSheetProperties": {
+                "properties": {"sheetId": sheet_id, "gridProperties": {"frozenRowCount": 1}},
+                "fields": "gridProperties.frozenRowCount"
+            }
+        }
+    ]
+
+    # 自动合并事件块：检测事件编号列（第0列），非空行为事件起始行
+    # 需要合并的列：A(0)事件编号, B(1)事件英文变量名, C(2)事件显示名, H(7)应埋点平台, I(8)备注
+    if data_values:
+        merge_cols = [0, 1, 2, 7, 8]
+        # 找出每个事件块的起始行（data_values 不含表头，行号从 1 开始算 sheet 行）
+        block_starts = []
+        for i, row in enumerate(data_values):
+            cell_val = row[0].strip() if len(row) > 0 and row[0] else ""
+            if cell_val:  # 事件编号非空 = 新事件块开始
+                block_starts.append(i)
+        # 生成合并请求
+        for idx, start in enumerate(block_starts):
+            end = block_starts[idx + 1] if idx + 1 < len(block_starts) else len(data_values)
+            if end - start <= 1:
+                continue  # 单行事件不需要合并
+            for col in merge_cols:
+                requests.append({
+                    "mergeCells": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start + 1,  # +1 因为表头占第 0 行
+                            "endRowIndex": end + 1,
+                            "startColumnIndex": col,
+                            "endColumnIndex": col + 1
+                        },
+                        "mergeType": "MERGE_ALL"
+                    }
+                })
+        # 合并后设置垂直居中对齐
+        if block_starts:
+            requests.append({
+                "repeatCell": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": 1, "endRowIndex": total_rows, "startColumnIndex": 0, "endColumnIndex": 9},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "verticalAlignment": "MIDDLE"
+                        }
+                    },
+                    "fields": "userEnteredFormat.verticalAlignment"
+                }
+            })
+
+    return _api(url, method="POST", body={"requests": requests})
+
+
 
 # ── CLI 入口 ──────────────────────────────────────────────
 
@@ -134,6 +242,8 @@ ACTIONS = {
     "list_sheets": lambda a: list_sheets(a["spreadsheet_id"]),
     "search": lambda a: search_spreadsheets(a["query"]),
     "find": lambda a: find_in_sheet(a["spreadsheet_id"], a["sheet"], a["query"]),
+    "create_sheet": lambda a: create_sheet(a["spreadsheet_id"], a["title"]),
+    "format_tracking_sheet": lambda a: format_tracking_sheet(a["spreadsheet_id"], a["sheet_id"], a["data_row_count"], a.get("data_values")),
 }
 
 
