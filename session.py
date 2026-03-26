@@ -161,6 +161,9 @@ class KiroProcess:
     async def start(self):
         os.makedirs(self._session_dir, exist_ok=True)
         cmd = ["kiro-cli", "acp", "--trust-all-tools"]
+        model = os.environ.get("KIRO_MODEL")
+        if model:
+            cmd += ["--model", model]
         if self._agent:
             cmd += ["--agent", self._agent]
         self._proc = await asyncio.create_subprocess_exec(
