@@ -5,7 +5,7 @@ import aiohttp
 
 log = logging.getLogger(__name__)
 
-WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/d/workspace/all")
+WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot")
 FUNASR_URL = os.getenv("FUNASR_URL", "http://localhost:10095")
 
 

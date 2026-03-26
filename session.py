@@ -4,7 +4,7 @@ from collections import OrderedDict
 
 log = logging.getLogger(__name__)
 
-WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/d/workspace/all")
+WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot")
 SESSIONS_DIR = os.path.join(WORK_DIR, "wecom-sessions")
 BRIDGE_DIR = os.path.dirname(os.path.abspath(__file__))
 SUMMARY_FILE = "summary.md"
@@ -274,24 +274,45 @@ class KiroProcess:
                 self._lock.release()
 
     async def _send_prompt(self, prompt: list[dict], user_text: str, on_chunk, timeout: float) -> str:
-        """公共 prompt 发送 + chunk 收集 + 历史记录"""
+        """公共 prompt 发送 + chunk 收集 + 历史记录
+
+        timeout 控制整体等待上限，单个 chunk 间隔超过 CHUNK_IDLE_TIMEOUT 也会触发超时。
+        """
+        CHUNK_IDLE_TIMEOUT = 120  # 单个 chunk 最长等待秒数
         self._full_text = ""
         self._chunk_queue = asyncio.Queue()
         mid = await self._send_rpc("session/prompt", {
             "sessionId": self._session_id,
             "prompt": prompt,
         })
+        deadline = time.monotonic() + timeout
         try:
             while True:
-                chunk = await self._chunk_queue.get()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    log.warning("prompt 整体超时 chatid=%s timeout=%ss", self._chatid, timeout)
+                    break
+                wait = min(remaining, CHUNK_IDLE_TIMEOUT)
+                try:
+                    chunk = await asyncio.wait_for(self._chunk_queue.get(), timeout=wait)
+                except asyncio.TimeoutError:
+                    # 检查进程是否还活着
+                    if not self.alive:
+                        log.error("ACP 进程已退出 chatid=%s", self._chatid)
+                        break
+                    log.warning("chunk 等待超时 chatid=%s idle=%ds，继续等待", self._chatid, int(wait))
+                    continue
                 if chunk is None:
                     break
                 if on_chunk and not self._interrupted:
                     await on_chunk(chunk)
             self._last_active = time.monotonic()
-            self._history.append({"user": user_text, "assistant": self._full_text})
-            _append_history(self._session_dir, user_text, self._full_text)
-            return self._full_text
+            result = self._full_text if self._full_text else ""
+            if not result:
+                result = "⚠️ 处理超时，请稍后重试或简化问题。"
+            self._history.append({"user": user_text, "assistant": result})
+            _append_history(self._session_dir, user_text, result)
+            return result
         except RuntimeError as e:
             log.error("ACP 进程异常 chatid=%s: %s", self._chatid, e)
             self._history.append({"user": user_text, "assistant": ""})

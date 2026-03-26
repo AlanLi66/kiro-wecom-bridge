@@ -14,7 +14,7 @@ from agents.sop.session import SOPSession
 log = logging.getLogger(__name__)
 
 DEFAULT_WELCOME = "👋 你好！我是 Kiro AI 助手，有什么可以帮你的？"
-WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/d/workspace/all")
+WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot")
 
 
 class Channel:

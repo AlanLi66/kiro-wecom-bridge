@@ -20,7 +20,7 @@ curl -s -X POST http://localhost:8900/scheduler/jobs \
   -H "Content-Type: application/json" \
   -d '{
     "cron": "0 9 * * *",
-    "chatid": "dm_ZhaoXingPing",
+    "chatid": "dm_Alan.Li",
     "prompt": "检查今天有没有待处理的 OP 任务",
     "description": "每天9点检查OP"
   }'
@@ -88,7 +88,7 @@ curl -s -X DELETE http://localhost:8900/scheduler/jobs/{id}
 
 ## chatid 规则
 
-- 私聊用户：`dm_用户名`（如 `dm_ZhaoXingPing`）
+- 私聊用户：`dm_用户名`（如 `dm_Alan.Li`）
 - 群聊：使用企微群的 chatid
 - chatid 决定了由哪个 kiro agent 处理任务（按 channels.json 中的路由配置）
 
@@ -100,5 +100,5 @@ curl -s -X DELETE http://localhost:8900/scheduler/jobs/{id}
 ```bash
 curl -s -X POST http://localhost:8900/scheduler/jobs \
   -H "Content-Type: application/json" \
-  -d '{"cron":"0 9 * * 1-5","chatid":"dm_ZhaoXingPing","prompt":"检查 OpenProject 中我的待办任务，列出未完成的","description":"工作日9点检查OP待办"}'
+  -d '{"cron":"0 9 * * 1-5","chatid":"dm_Alan.Li","prompt":"检查 OpenProject 中我的待办任务，列出未完成的","description":"工作日9点检查OP待办"}'
 ```

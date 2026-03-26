@@ -19,7 +19,7 @@ curl -s -X POST http://localhost:8900/send \
 
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |------|------|------|------|------|
-| chatid | string | 否 | dm_ZhaoXingPing | 目标群/私聊 ID |
+| chatid | string | 否 | dm_Alan.Li | 目标群/私聊 ID |
 | content | string | 是 | - | 消息内容，支持企微 markdown |
 | chat_type | int | 否 | 2 | 1=单聊 2=群聊 |
 | bot_index | int | 否 | 0 | 多机器人时指定用哪个 |

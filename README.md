@@ -168,7 +168,7 @@ cp channels.example.json channels.json
 
 | 变量 | 说明 | 必填 | 默认值 |
 |------|------|------|--------|
-| `KIRO_WORK_DIR` | kiro-cli 工作目录 | 是 | `/mnt/d/workspace/all` |
+| `KIRO_WORK_DIR` | kiro-cli 工作目录 | 是 | `/mnt/i/workspace/alan_bot` |
 | `HOST` | 服务监听地址 | 否 | `0.0.0.0` |
 | `PORT` | 服务监听端口 | 否 | `8900` |
 | `CHANNELS_PATH` | channels.json 路径 | 否 | `channels.json` |
@@ -355,9 +355,9 @@ Kiro 执行 prompt 并将结果主动推送到对应的企微聊天。
 将 skill 目录复制（或软链接）到你的 Kiro workspace 的 `.kiro/skills/` 下：
 
 ```bash
-# 假设 workspace 在 /mnt/d/workspace/all
-WORKSPACE=/mnt/d/workspace/all
-BRIDGE=/mnt/d/code/yami/kiro-wecom-bridge
+# 假设 workspace 在 /mnt/i/workspace/alan_bot
+WORKSPACE=/mnt/i/workspace/alan_bot
+BRIDGE=/mnt/i/workspace/kiro-wecom-bridge
 
 # 方式一：软链接（推荐，bridge 更新后自动生效）
 ln -sf $BRIDGE/skills/wecom-memory $WORKSPACE/.kiro/skills/wecom-memory
@@ -416,7 +416,7 @@ curl -s -X POST http://localhost:8900/send \
 
 | 参数 | 说明 | 默认 |
 |------|------|------|
-| `chatid` | 目标 chatid（私聊用 `dm_用户ID`，群聊用群 chatid） | `dm_ZhaoXingPing` |
+| `chatid` | 目标 chatid（私聊用 `dm_用户ID`，群聊用群 chatid） | `dm_Alan.Li` |
 | `content` | 消息内容，支持企微 markdown | — |
 | `chat_type` | 1=单聊 2=群聊 | 1 |
 | `bot_index` | 多机器人时指定 channel | 0 |
@@ -425,43 +425,29 @@ curl -s -X POST http://localhost:8900/send \
 
 ```
 kiro-wecom-bridge/
-├── main.py               # FastAPI 主服务，生命周期管理，Teams HTTP API
+├── main.py               # FastAPI 主服务，生命周期管理，定时任务/通知 API
 ├── ws_client.py          # 企微 WebSocket 长连接客户端
-├── channel.py            # 消息路由，按 agent_mode 分发到不同 session
-├── stream.py             # StreamSegmenter 流式分段
-├── media.py              # 多媒体处理：图片解密、语音 STT、文件下载
-├── guard.py              # 安全防护：注入检测 + 权限分级 preamble
+├── channel.py            # Channel 管理 + 流式分段 + 图片/语音/文件处理
+├── session.py            # ACP 进程池，per-chatid kiro-cli 进程管理 + 记忆回收
 ├── scheduler.py          # 定时任务调度：SQLite 持久化 + 系统 crontab
+├── guard.py              # 安全防护：注入检测 + 权限分级（full/safe 模式）
 ├── memory.py             # 长期记忆：SQLite 实体关系图谱 + FTS5 + 向量检索
-├── memory_cli.py         # 记忆系统 CLI（兼容旧调用方式）
-├── memory_server.py      # 记忆系统 HTTP 常驻服务（端口 8901）
-├── agents/
-│   ├── process.py        # KiroProcess — kiro-cli ACP 进程封装（共用）
-│   ├── task_manager.py   # TaskManager — tasks.json CRUD（delegate/groupchat 用）
-│   ├── single/
-│   │   └── session.py    # ProcessPool — 预热池 + LRU 淘汰
-│   ├── delegate/
-│   │   └── session.py    # DelegateSession — 主 Agent + Worker 池
-│   ├── groupchat/
-│   │   └── session.py    # GroupChatSession — Manager + 工作 Agent + 共享消息
-│   └── teams/
-│       ├── jsonl_store.py # JsonlStore — JSONL + 文件锁基类
-│       ├── task_list.py  # TaskList — 任务列表（claim/complete/fail/validate）
-│       ├── mailbox.py    # Mailbox — Agent 间通信
-│       └── session.py    # TeamsSession — Lead + Teammates + poll loop
-├── skills/               # Kiro Skills
+├── memory_cli.py         # 记忆系统 CLI，供 kiro skill 通过 bash 调用
+├── funasr_server.py      # FunASR 语音识别服务（可选）
+├── install.sh            # 一键环境安装（venv + 依赖，--full 含记忆系统）
+├── start.sh              # 启动脚本（前置检查 + 启动）
+├── restart.sh            # 重启脚本（杀旧 + 启动新）
+├── kiro-wecom-bridge.service # systemd 服务文件
+├── skills/               # Kiro skills（可软链接到 workspace/.kiro/skills/）
 │   ├── wecom-memory/     # 长期记忆 skill
-│   ├── wecom-scheduler/  # 定时任务 skill
-│   └── notify-wecom/     # 消息通知 skill
-├── docs/
-│   ├── multi-agent-requirements.md  # 多 Agent 需求文档
-│   ├── arch-delegate.md             # Delegate 模式架构
-│   └── arch-teams.md               # Teams 模式架构
-├── install.sh            # 一键环境安装
-├── start.sh              # 启动脚本（bridge + memory_server）
-├── restart.sh            # 重启脚本
+│   ├── wecom-scheduler/  # 定时任务管理 skill
+│   └── notify-wecom/     # 企微消息通知 skill
 ├── channels.json         # 机器人配置（git ignored）
 ├── channels.example.json # 配置模板
+├── .env                  # 环境变量（git ignored）
+├── .env.example          # 环境变量模板
+├── requirements.txt      # 基础依赖
+├── requirements-memory.txt # 记忆系统依赖（sentence-transformers + sqlite-vec）
 └── README.md
 ```
 
@@ -501,7 +487,7 @@ MEMORY_CHATID=test python3 memory_cli.py get_history '{"entity_name":"张三"}'
 查看原始数据：
 
 ```bash
-sqlite3 /mnt/d/workspace/all/wecom-sessions/test/memory.db "SELECT * FROM entities;"
+sqlite3 /mnt/i/workspace/alan_bot/wecom-sessions/test/memory.db "SELECT * FROM entities;"
 ```
 
 ## License

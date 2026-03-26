@@ -5,7 +5,7 @@ import json, os, sys, traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from memory import MemoryDB
 
-SESSIONS_DIR = os.path.join(os.getenv("KIRO_WORK_DIR", "/mnt/d/workspace/all"), "wecom-sessions")
+SESSIONS_DIR = os.path.join(os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot"), "wecom-sessions")
 
 
 def main():

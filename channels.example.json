@@ -4,8 +4,8 @@
     "secret": "your_secret",
     "welcome_msg": "👋 你好！我是 Kiro AI 助手，有什么可以帮你的？",
     "chats": {
-      "default": {"agent": null, "cwd": "/mnt/d/workspace/all", "mode": "safe"},
-      "dm_YourUserId": {"agent": null, "cwd": "/mnt/d/workspace/all", "mode": "full"}
+      "default": {"agent": null, "cwd": "/mnt/i/workspace/alan_bot", "mode": "safe"},
+      "dm_YourUserId": {"agent": null, "cwd": "/mnt/i/workspace/alan_bot", "mode": "full"}
     }
   }
 ]
