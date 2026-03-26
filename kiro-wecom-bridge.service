@@ -4,12 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=lucky
-WorkingDirectory=/mnt/d/code/yami/kiro-wecom-bridge
-ExecStart=/mnt/d/code/yami/kiro-wecom-bridge/start.sh
+User=root
+WorkingDirectory=/mnt/i/workspace/kiro-wecom-bridge
+ExecStart=/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3 main.py
 Restart=always
 RestartSec=5
-Environment=PATH=/home/lucky/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/root/.local/bin:/root/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=multi-user.target

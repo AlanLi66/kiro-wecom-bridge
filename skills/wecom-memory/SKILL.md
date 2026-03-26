@@ -37,7 +37,7 @@ description: "长期记忆存储。当你不确定某个信息、需要回忆之
 ### search — 搜索记忆
 
 ```bash
-MEMORY_CHATID="{chatid}" /mnt/d/code/yami/kiro-wecom-bridge/.venv/bin/python3 /mnt/d/code/yami/kiro-wecom-bridge/memory_cli.py search '{"query": "关键词"}'
+MEMORY_CHATID="{chatid}" /mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3 /mnt/i/workspace/kiro-wecom-bridge/memory_cli.py search '{"query": "关键词"}'
 ```
 
 每次只搜一个关键词。需要搜多个就调多次。
@@ -45,7 +45,7 @@ MEMORY_CHATID="{chatid}" /mnt/d/code/yami/kiro-wecom-bridge/.venv/bin/python3 /m
 ### save_entity — 保存/更新实体
 
 ```bash
-MEMORY_CHATID="{chatid}" /mnt/d/code/yami/kiro-wecom-bridge/.venv/bin/python3 /mnt/d/code/yami/kiro-wecom-bridge/memory_cli.py save_entity '{"type": "person", "name": "张三", "description": "后端开发，负责订单服务"}'
+MEMORY_CHATID="{chatid}" /mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3 /mnt/i/workspace/kiro-wecom-bridge/memory_cli.py save_entity '{"type": "person", "name": "张三", "description": "后端开发，负责订单服务"}'
 ```
 
 类型：person / service / project / tool / config / decision / preference
@@ -55,13 +55,13 @@ MEMORY_CHATID="{chatid}" /mnt/d/code/yami/kiro-wecom-bridge/.venv/bin/python3 /m
 ### save_relation — 保存关系
 
 ```bash
-MEMORY_CHATID="{chatid}" /mnt/d/code/yami/kiro-wecom-bridge/.venv/bin/python3 /mnt/d/code/yami/kiro-wecom-bridge/memory_cli.py save_relation '{"from_name": "张三", "relation": "负责", "to_name": "订单服务"}'
+MEMORY_CHATID="{chatid}" /mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3 /mnt/i/workspace/kiro-wecom-bridge/memory_cli.py save_relation '{"from_name": "张三", "relation": "负责", "to_name": "订单服务"}'
 ```
 
 ### get_history — 查看实体变更历史
 
 ```bash
-MEMORY_CHATID="{chatid}" /mnt/d/code/yami/kiro-wecom-bridge/.venv/bin/python3 /mnt/d/code/yami/kiro-wecom-bridge/memory_cli.py get_history '{"entity_name": "订单服务"}'
+MEMORY_CHATID="{chatid}" /mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3 /mnt/i/workspace/kiro-wecom-bridge/memory_cli.py get_history '{"entity_name": "订单服务"}'
 ```
 
 ## chatid 规则

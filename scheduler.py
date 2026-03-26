@@ -4,7 +4,7 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-SESSIONS_DIR = os.path.join(os.getenv("KIRO_WORK_DIR", "/mnt/d/workspace/all"), "wecom-sessions")
+SESSIONS_DIR = os.path.join(os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot"), "wecom-sessions")
 DB_PATH = os.path.join(SESSIONS_DIR, "scheduler.db")
 BRIDGE_PORT = int(os.getenv("PORT", "8900"))
 CRONTAB_TAG = "# kiro-scheduler:"

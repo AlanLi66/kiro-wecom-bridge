@@ -58,7 +58,7 @@ async def _daily_memory_loop():
         log.info("下次记忆整理: %.0f 秒后", wait)
         await asyncio.sleep(wait)
         # 扫描所有 chatid 的 history.jsonl
-        sessions_dir = os.path.join(os.getenv("KIRO_WORK_DIR", "/mnt/d/workspace/all"), "wecom-sessions")
+        sessions_dir = os.path.join(os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot"), "wecom-sessions")
         for hist_file in glob.glob(os.path.join(sessions_dir, "*/history.jsonl")):
             chatid = os.path.basename(os.path.dirname(hist_file))
             if chatid.startswith("_warm"):
@@ -77,7 +77,7 @@ async def _daily_memory_loop():
                 from agents.process import _recycle_memory, _load_history, _clear_history
                 session_dir = os.path.dirname(hist_file)
                 history = _load_history(session_dir, max_turns=50)
-                cwd = os.getenv("KIRO_WORK_DIR", "/mnt/d/workspace/all")
+                cwd = os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot")
                 await _recycle_memory(chatid, session_dir, cwd, history)
                 _clear_history(session_dir)
             except Exception as e:
@@ -116,10 +116,10 @@ class CronTriggerRequest(BaseModel):
 
 
 class SendMsgRequest(BaseModel):
-    chatid: str = "dm_ZhaoXingPing"
+    chatid: str = "dm_Alan.Li"
     content: str
     bot_index: int = 0
-    chat_type: int = 1  # 1=单聊 2=群聊，默认私聊给 ZhaoXingPing
+    chat_type: int = 1  # 1=单聊 2=群聊
 
 
 @app.post("/send")
@@ -144,10 +144,14 @@ async def cron_trigger(req: CronTriggerRequest):
     ch = cm.channels[req.bot_index]
     chat_cfg = ch._get_chat_config(req.chatid)
     agent = chat_cfg.get("agent")
-    cwd = chat_cfg.get("cwd", os.getenv("KIRO_WORK_DIR", "/mnt/d/workspace/all"))
+    cwd = chat_cfg.get("cwd", os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot"))
     try:
         proc = await ch.pool.get_or_create(req.chatid, agent=agent, cwd=cwd, mode="full")
         reply = await proc.send(f"[cron]: {req.prompt}", timeout=300)
+        # 如果 agent 返回的是超时 fallback 消息，不推送给用户
+        if reply.startswith("⚠️ 处理超时") or reply.startswith("❌"):
+            log.warning("cron 任务异常，不推送给用户 chatid=%s reply=%s", req.chatid, reply[:80])
+            return {"ok": False, "error": reply}
         chat_type = 1 if req.chatid.startswith("dm_") else 2
         await ch.ws.send_msg(req.chatid, chat_type, reply)
         return {"ok": True, "reply_length": len(reply)}
