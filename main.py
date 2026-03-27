@@ -13,6 +13,7 @@ from channel import ChannelManager
 from agents.teams.task_list import TaskList
 from agents.teams.mailbox import Mailbox
 import scheduler
+import zentao_poller
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -92,10 +93,12 @@ async def lifespan(app: FastAPI):
     cleanup_task = asyncio.create_task(_cleanup_loop())
     memory_task = asyncio.create_task(_daily_memory_loop())
     scheduler.sync_all()
+    zentao_task = asyncio.create_task(zentao_poller.poll_loop())
     # 预热进程池
     for ch in cm.channels:
         await ch.pool.warmup()
     yield
+    zentao_task.cancel()
     cleanup_task.cancel()
     memory_task.cancel()
     for t in ws_tasks:
@@ -209,6 +212,31 @@ async def delete_job(job_id: str):
     if not scheduler.delete_job(job_id):
         return {"ok": False, "error": "job not found"}
     return {"ok": True}
+
+
+# ---- 禅道 Bug 轮询控制 API ----
+
+class ZentaoToggleRequest(BaseModel):
+    enabled: bool
+    chatid: str = "dm_Alan.Li"
+    product_id: int = 11
+
+@app.get("/zentao/status")
+async def zentao_status():
+    return {"ok": True, **zentao_poller.get_status()}
+
+@app.post("/zentao/toggle")
+async def zentao_toggle(req: ZentaoToggleRequest):
+    if req.enabled:
+        zentao_poller.enable(req.chatid, req.product_id)
+    else:
+        zentao_poller.disable()
+    return {"ok": True, **zentao_poller.get_status()}
+
+@app.post("/zentao/reset")
+async def zentao_reset():
+    zentao_poller.reset_seen()
+    return {"ok": True, "msg": "seen_ids 已重置"}
 
 
 # ---- Task Helper HTTP API (Teams 模式) ----
