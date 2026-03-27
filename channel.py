@@ -160,7 +160,12 @@ class Channel:
             log.error("mixed 处理异常 req=%s: %s", req_id, e)
             await self.ws.send_stream(req_id, stream_id, f"❌ 处理异常: {e}", finish=True)
 
+    _HELP_KEYWORDS = {"帮助", "help", "/help"}
+
     async def _process_and_reply(self, req_id: str, stream_id: str, chatid: str, text: str):
+        if text.strip().lower() in self._HELP_KEYWORDS:
+            await self.ws.send_stream(req_id, stream_id, self.welcome_msg, finish=True)
+            return
         await self._send_to_agent(req_id, stream_id, chatid, text)
 
     async def _send_to_agent(self, req_id: str, stream_id: str, chatid: str, text: str):
