@@ -3,4 +3,5 @@
 .env
 __pycache__/
 channels.json
+db_config.json
 .venv/

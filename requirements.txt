@@ -7,3 +7,4 @@ cryptography
 aiosqlite
 langgraph
 langgraph-checkpoint-sqlite
+pymysql
