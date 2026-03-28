@@ -4,7 +4,7 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-POLL_INTERVAL = int(os.getenv("ZENTAO_POLL_INTERVAL", "900"))  # 默认 15 分钟
+_poll_interval = int(os.getenv("ZENTAO_POLL_INTERVAL", "900"))  # 默认 15 分钟
 BRIDGE_PORT = int(os.getenv("PORT", "8900"))
 ZENTAO_CLI = os.path.join(os.path.dirname(__file__), "zentao_cli.py")
 VENV_PYTHON = os.path.join(os.path.dirname(__file__), ".venv", "bin", "python3")
@@ -26,12 +26,18 @@ def get_status() -> dict:
         "enabled": _state["enabled"],
         "chatid": _state["chatid"],
         "product_id": _state["product_id"],
-        "interval_seconds": POLL_INTERVAL,
+        "interval_seconds": _poll_interval,
         "last_poll": _state["last_poll"],
         "poll_count": _state["poll_count"],
         "new_bugs_found": _state["new_bugs_found"],
         "seen_count": len(_state["seen_ids"]),
     }
+
+
+def set_interval(seconds: int):
+    global _poll_interval
+    _poll_interval = max(seconds, 10)
+    log.info("轮询间隔已更新为 %ds", _poll_interval)
 
 
 def enable(chatid: str = "dm_Alan.Li", product_id: int = 11):
@@ -79,16 +85,37 @@ async def _fetch_bugs() -> list[dict]:
 async def _trigger_analysis(bug_id: int, title: str):
     """通过 cron/trigger 接口让 agent 分析 bug"""
     import aiohttp
+    get_bug_cmd = '{"id": ' + str(bug_id) + '}'
     prompt = (
         f"[cron]: 禅道新 Bug #{bug_id} 需要分析\n"
         f"标题: {title}\n\n"
-        f"请执行以下步骤:\n"
-        f"1. 调用 zentao_cli.py get_bug 获取 bug 详情（含复现步骤）\n"
-        f"2. 根据 bug 描述中的关键词，在代码中搜索可能的问题点\n"
-        f"3. 如果 bug 涉及线上异常，用 kibana_search.py 查最近的 error 日志\n"
-        f"4. 输出分析结果：bug 摘要 + 可能的代码位置 + 修复建议\n\n"
-        f"调用示例:\n"
-        f"zentao_cli.py get_bug '{{\"id\": {bug_id}}}'"
+        "请按以下流程处理:\n\n"
+        "## 第 1 步：获取 Bug 详情\n"
+        f"调用 zentao_cli.py get_bug '{get_bug_cmd}'，获取完整的复现步骤、严重程度、关联项目等信息。\n\n"
+        "## 第 2 步：分析定位\n"
+        "- 从 bug 标题/描述/复现步骤中提取关键词（接口名、错误信息、页面名等）\n"
+        "- 根据 page-feature-map 和 project-index 确定涉及的项目和文件\n"
+        "- 在代码中搜索相关文件（grep/find）\n"
+        "- 如果涉及线上异常，用 kibana_search.py 查最近的 error 日志\n\n"
+        "## 第 3 步：输出分析结果\n"
+        "输出格式：\n"
+        f"🐛 Bug #{bug_id}: {{标题}}\n"
+        "严重程度: {severity} | 优先级: {pri}\n\n"
+        "📍 问题定位:\n"
+        "- 涉及项目: {项目名}\n"
+        "- 相关文件: {文件路径}\n"
+        "- 问题原因: {分析结论}\n\n"
+        "🔧 修复建议:\n"
+        "- {具体修复方案}\n\n"
+        "## 第 4 步：引导修复\n"
+        '分析完成后，主动询问用户："需要我直接帮你修改代码吗？"\n\n'
+        "如果用户确认要修改，执行以下检查：\n"
+        "1. 从 bug 详情的标题或描述中提取 OP 号（格式 OP-XXXXX）\n"
+        "2. 确认涉及的项目目录，用 git branch --show-current 查看当前分支\n"
+        "3. 检查当前分支名是否包含对应的 OP 号\n"
+        "   - 如果一致 → 直接修改代码\n"
+        '   - 如果不一致 → 提醒用户："当前分支是 {branch}，但 bug 关联的是 OP-XXXXX，分支不匹配。需要切换分支吗？"\n'
+        "4. 分支确认后，按最小改动原则修复 bug，只改必要的代码\n"
     )
     payload = {
         "chatid": _state["chatid"],
@@ -114,7 +141,7 @@ async def _trigger_analysis(bug_id: int, title: str):
 async def poll_loop():
     """主轮询循环，在 lifespan 中启动"""
     # 启动时先初始化 seen_ids（避免首次开启时推送所有历史 bug）
-    log.info("禅道轮询器已启动，间隔 %ds", POLL_INTERVAL)
+    log.info("禅道轮询器已启动，间隔 %ds", _poll_interval)
     _initialized = False
 
     while True:
@@ -133,7 +160,7 @@ async def poll_loop():
             _initialized = True
             _state["last_poll"] = datetime.now().isoformat(timespec="seconds")
             log.info("禅道轮询初始化完成，已记录 %d 个现有 bug", len(_state["seen_ids"]))
-            await asyncio.sleep(POLL_INTERVAL)
+            await asyncio.sleep(_poll_interval)
             continue
 
         # 正常轮询
@@ -157,4 +184,4 @@ async def poll_loop():
         else:
             log.debug("本轮无新 bug")
 
-        await asyncio.sleep(POLL_INTERVAL)
+        await asyncio.sleep(_poll_interval)

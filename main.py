@@ -220,6 +220,7 @@ class ZentaoToggleRequest(BaseModel):
     enabled: bool
     chatid: str = "dm_Alan.Li"
     product_id: int = 11
+    interval_seconds: int | None = None
 
 @app.get("/zentao/status")
 async def zentao_status():
@@ -227,6 +228,8 @@ async def zentao_status():
 
 @app.post("/zentao/toggle")
 async def zentao_toggle(req: ZentaoToggleRequest):
+    if req.interval_seconds is not None:
+        zentao_poller.set_interval(req.interval_seconds)
     if req.enabled:
         zentao_poller.enable(req.chatid, req.product_id)
     else:

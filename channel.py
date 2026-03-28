@@ -188,17 +188,25 @@ class Channel:
             try:
                 while True:
                     await asyncio.sleep(interval)
-                    await self.ws.send_stream(req_id, stream_id, " ...", finish=False)
+                    await self.ws.send_stream(req_id, stream_id, "...", finish=False)
             except asyncio.CancelledError:
                 pass
 
         try:
-            await self.ws.send_stream(req_id, stream_id, "🤔", finish=False)
+            await self.ws.send_stream(req_id, stream_id, "思考中...", finish=False)
             heartbeat = asyncio.create_task(_keepalive())
+            _first_chunk = True
 
             async def _feed_and_cancel_heartbeat(chunk):
+                nonlocal _first_chunk
                 heartbeat.cancel()
-                await seg.feed(chunk)
+                if _first_chunk:
+                    _first_chunk = False
+                    # 第一个 chunk：直接用完整文本替换占位符，跳过 segmenter 的延迟
+                    seg._seg_text = chunk
+                    await self.ws.send_stream(req_id, stream_id, chunk, finish=False)
+                else:
+                    await seg.feed(chunk)
 
             if agent_mode == "single":
                 proc = await self.pool.get_or_create(
