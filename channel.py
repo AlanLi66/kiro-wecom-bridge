@@ -20,6 +20,7 @@ WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot")
 class Channel:
     def __init__(self, config: dict):
         self.bot_id = config["bot_id"]
+        self.bot_name = config.get("bot_name", "")
         self.welcome_msg = config.get("welcome_msg", DEFAULT_WELCOME)
         self.ws = WsClient(self.bot_id, config["secret"], self._on_message, self._on_event)
         self.pool = ProcessPool()
@@ -32,6 +33,21 @@ class Channel:
 
     def _get_chat_config(self, chatid: str) -> dict:
         return self._chats.get(chatid, self._chats.get("default", {}))
+
+    def _strip_mention(self, text: str) -> str:
+        """去掉 @mention 前缀，支持 bot 名字含空格（如 '@Alan Li Silicon'）"""
+        if not text.startswith("@"):
+            return text
+        # 优先用配置的 bot_name 精确匹配
+        if self.bot_name:
+            prefix = f"@{self.bot_name}"
+            if text.startswith(prefix):
+                rest = text[len(prefix):]
+                # 前缀后可能紧跟空格或直接跟内容
+                return rest.lstrip()
+        # fallback: 按第一个空格切（兼容单词名字）
+        parts = text.split(None, 1)
+        return parts[1].strip() if len(parts) > 1 else ""
 
     async def start(self):
         log.info("Channel [%s] 启动", self.bot_id[:8])
@@ -86,8 +102,9 @@ class Channel:
         if not text:
             return
         if text.startswith("@"):
-            parts = text.split(None, 1)
-            text = parts[1] if len(parts) > 1 else text
+            text = self._strip_mention(text)
+        if not text:
+            return
 
         hit = check_injection(text)
         if hit:
@@ -140,11 +157,21 @@ class Channel:
                 return
 
             combined_text = " ".join(t.strip() for t in text_parts if t.strip())
+            # 去掉 @mention 前缀（群聊 mixed 消息中 @botname 作为文本 item）
+            if combined_text.startswith("@"):
+                combined_text = self._strip_mention(combined_text)
+
             if combined_text:
                 hit = check_injection(combined_text)
                 if hit:
                     log.warning("拦截注入 chatid=%s pattern=%s", chatid, hit)
                     await self.ws.send_stream(req_id, stream_id, "⚠️ 检测到异常指令，已拦截。", finish=True)
+                    return
+
+            # 快捷命令：帮助 / help → 直接返回欢迎语，不经过 agent
+            if not attach_paths and combined_text.lower() in ("帮助", "help", "/help", "?", "？"):
+                if self.welcome_msg:
+                    await self.ws.send_stream(req_id, stream_id, self.welcome_msg, finish=True)
                     return
 
             if attach_paths and not combined_text:
