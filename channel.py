@@ -181,6 +181,15 @@ class Channel:
         """实际发送逻辑"""
         chat_cfg = self._get_chat_config(chatid)
         agent_mode = chat_cfg.get("agent_mode", "single")
+        mode = chat_cfg.get("mode", "full")
+        # 按 userid 提权：_full_users 中的用户在任何聊天中都是 full 权限
+        full_users = self._chats.get("_full_users", [])
+        if full_users and mode != "full" and text.startswith("["):
+            end = text.find("]")
+            if end > 0:
+                userid = text[1:end].split("(")[0]
+                if userid in full_users:
+                    mode = "full"
         seg = StreamSegmenter(self.ws, req_id, stream_id)
 
         async def _keepalive(interval=10):
@@ -211,7 +220,7 @@ class Channel:
             if agent_mode == "single":
                 proc = await self.pool.get_or_create(
                     chatid, agent=chat_cfg.get("agent"),
-                    cwd=chat_cfg.get("cwd", WORK_DIR), mode=chat_cfg.get("mode", "full"))
+                    cwd=chat_cfg.get("cwd", WORK_DIR), mode=mode)
                 result = await proc.send(text, on_chunk=_feed_and_cancel_heartbeat)
                 heartbeat.cancel()
                 if result:
