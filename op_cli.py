@@ -83,6 +83,22 @@ def add_comment(task_id: int, comment: str) -> dict:
                 body={"comment": {"raw": comment}})
 
 
+def create_task(project_id: int, subject: str, type_id: int = 1,
+                assignee_id: int = 0, description: str = "") -> dict:
+    """创建工单。type_id: 1=Task, 2=Milestone, 3=Phase, 4=Feature, 5=Epic, 6=User Story, 7=Bug"""
+    body = {
+        "subject": subject,
+        "_links": {
+            "type": {"href": f"/api/v3/types/{type_id}"},
+        },
+    }
+    if description:
+        body["description"] = {"format": "markdown", "raw": description}
+    if assignee_id:
+        body["_links"]["assignee"] = {"href": f"/api/v3/users/{assignee_id}"}
+    return _api(f"/projects/{project_id}/work_packages", method="POST", body=body)
+
+
 def search_tasks(query: str, project_id: int = 0) -> list:
     """搜索任务"""
     filters = [{"subjectOrId": {"operator": "**", "values": [query]}}]
@@ -111,6 +127,7 @@ ACTIONS = {
     "update_status": lambda a: update_status(a["id"], a["status_id"]),
     "add_comment": lambda a: add_comment(a["id"], a["comment"]),
     "search": lambda a: search_tasks(a["query"], a.get("project_id", 0)),
+    "create_task": lambda a: create_task(a["project_id"], a["subject"], a.get("type_id", 1), a.get("assignee_id", 0), a.get("description", "")),
 }
 
 
