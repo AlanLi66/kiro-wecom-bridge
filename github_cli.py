@@ -142,6 +142,98 @@ def submit_review(owner: str, repo: str, number: int,
                    method="POST", body={"body": body, "event": event})
 
 
+def create_pr(owner: str, repo: str, title: str, head: str, base: str = "master",
+              body: str = "", draft: bool = False) -> dict:
+    """创建 Pull Request"""
+    payload = {"title": title, "head": head, "base": base, "body": body, "draft": draft}
+    pr = _gh_api(f"/repos/{owner}/{repo}/pulls", method="POST", body=payload)
+    return {
+        "number": pr["number"],
+        "title": pr["title"],
+        "url": pr["html_url"],
+        "head": pr["head"]["ref"],
+        "base": pr["base"]["ref"],
+        "draft": pr.get("draft", False),
+        "state": pr["state"],
+    }
+
+
+def list_tags(owner: str, repo: str, per_page: int = 20) -> list:
+    """列出仓库 tags"""
+    data = _gh_api(f"/repos/{owner}/{repo}/tags?per_page={per_page}")
+    return [{"name": t["name"], "sha": t["commit"]["sha"][:8]} for t in data]
+def list_releases(owner: str, repo: str, per_page: int = 10) -> list:
+    """列出仓库 releases（按发布时间倒序，用于查找回滚 tag）"""
+    data = _gh_api(f"/repos/{owner}/{repo}/releases?per_page={per_page}")
+    return [{"tag": r["tag_name"], "name": r["name"], "published_at": r.get("published_at", ""),
+             "draft": r.get("draft", False), "prerelease": r.get("prerelease", False),
+             "url": r["html_url"]} for r in data]
+
+
+def create_tag(owner: str, repo: str, tag: str, sha: str = "", message: str = "") -> dict:
+    """创建 tag（annotated tag via Git API）。sha 默认为默认分支最新 commit。"""
+    if not sha:
+        repo_info = _gh_api(f"/repos/{owner}/{repo}")
+        default_branch = repo_info.get("default_branch", "master")
+        branch = _gh_api(f"/repos/{owner}/{repo}/branches/{default_branch}")
+        sha = branch["commit"]["sha"]
+    # 创建 tag object
+    tag_obj = _gh_api(f"/repos/{owner}/{repo}/git/tags", method="POST", body={
+        "tag": tag, "message": message or tag,
+        "object": sha, "type": "commit",
+    })
+    # 创建 ref 指向 tag object
+    _gh_api(f"/repos/{owner}/{repo}/git/refs", method="POST", body={
+        "ref": f"refs/tags/{tag}", "sha": tag_obj["sha"],
+    })
+    return {"tag": tag, "sha": sha[:8], "url": f"https://github.com/{owner}/{repo}/releases/tag/{tag}"}
+
+
+def create_release(owner: str, repo: str, tag: str, name: str = "",
+                   body: str = "", draft: bool = False, prerelease: bool = False) -> dict:
+    """基于 tag 创建 GitHub Release"""
+    payload = {
+        "tag_name": tag, "name": name or tag, "body": body,
+        "draft": draft, "prerelease": prerelease,
+    }
+    rel = _gh_api(f"/repos/{owner}/{repo}/releases", method="POST", body=payload)
+    return {"id": rel["id"], "tag": rel["tag_name"], "name": rel["name"],
+            "url": rel["html_url"], "draft": rel.get("draft", False)}
+
+
+def delete_tag(owner: str, repo: str, tag: str) -> dict:
+    """删除 tag（同时删除关联的 release）"""
+    # 先尝试删除关联的 release
+    try:
+        rel = _gh_api(f"/repos/{owner}/{repo}/releases/tags/{tag}")
+        _gh_api(f"/repos/{owner}/{repo}/releases/{rel['id']}", method="DELETE")
+    except RuntimeError:
+        pass  # 没有关联 release，继续删 tag
+    # 删除 git ref
+    _gh_api(f"/repos/{owner}/{repo}/git/refs/tags/{tag}", method="DELETE")
+    return {"deleted": tag}
+
+
+def update_release(owner: str, repo: str, tag: str, name: str = "",
+                   body: str = "", draft: bool = False, prerelease: bool = False) -> dict:
+    """更新已有 release 的信息"""
+    rel = _gh_api(f"/repos/{owner}/{repo}/releases/tags/{tag}")
+    payload = {}
+    if name:
+        payload["name"] = name
+    if body:
+        payload["body"] = body
+    if "draft" in {draft}:
+        payload["draft"] = draft
+    if "prerelease" in {prerelease}:
+        payload["prerelease"] = prerelease
+    if not payload:
+        return {"error": "nothing to update"}
+    updated = _gh_api(f"/repos/{owner}/{repo}/releases/{rel['id']}", method="PATCH", body=payload)
+    return {"id": updated["id"], "tag": updated["tag_name"], "name": updated["name"],
+            "url": updated["html_url"]}
+
+
 def list_repos(owner: str) -> list:
     """列出用户/组织的仓库"""
     try:
@@ -168,6 +260,24 @@ ACTIONS = {
         a["owner"], a["repo"], a["number"], a["body"], a.get("event", "COMMENT")
     ),
     "list_repos": lambda a: list_repos(a["owner"]),
+    "create_pr": lambda a: create_pr(
+        a["owner"], a["repo"], a["title"], a["head"],
+        a.get("base", "master"), a.get("body", ""), a.get("draft", False)
+    ),
+    "list_tags": lambda a: list_tags(a["owner"], a["repo"], a.get("per_page", 20)),
+    "list_releases": lambda a: list_releases(a["owner"], a["repo"], a.get("per_page", 10)),
+    "create_tag": lambda a: create_tag(
+        a["owner"], a["repo"], a["tag"], a.get("sha", ""), a.get("message", "")
+    ),
+    "create_release": lambda a: create_release(
+        a["owner"], a["repo"], a["tag"], a.get("name", ""), a.get("body", ""),
+        a.get("draft", False), a.get("prerelease", False)
+    ),
+    "delete_tag": lambda a: delete_tag(a["owner"], a["repo"], a["tag"]),
+    "update_release": lambda a: update_release(
+        a["owner"], a["repo"], a["tag"], a.get("name", ""), a.get("body", ""),
+        a.get("draft", False), a.get("prerelease", False)
+    ),
 }
 
 

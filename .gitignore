@@ -5,3 +5,6 @@ __pycache__/
 channels.json
 db_config.json
 .venv/
+
+# Web Quality 报告和数据
+reports/
