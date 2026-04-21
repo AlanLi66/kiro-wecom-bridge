@@ -35,6 +35,7 @@ AGENT_CWD_MAP = {
     "coder-agent": os.path.join(AGENT_WORKSPACE_DIR, "coder"),
     "reviewer-agent": os.path.join(AGENT_WORKSPACE_DIR, "reviewer"),
     "doc-engineer-agent": os.path.join(AGENT_WORKSPACE_DIR, "coder"),
+    "qa-agent": os.path.join(AGENT_WORKSPACE_DIR, "coder"),
     "groupchat-manager": os.path.join(AGENT_WORKSPACE_DIR, "manager"),
     "classifier-agent": os.path.join(AGENT_WORKSPACE_DIR, "classifier"),
 }
@@ -93,7 +94,12 @@ async def _run_agent(state: SOPState, agent_name: str, prompt: str) -> str:
         await proc.start()
         _agent_procs[key] = proc
         log.info("SOP 新建进程 agent=%s cwd=%s", agent_name, cwd)
-    return await proc.send(prompt, timeout=600) or ""
+    try:
+        return await proc.send(prompt, timeout=600) or ""
+    except Exception as e:
+        log.error("SOP agent 异常 agent=%s: %s", agent_name, e)
+        _agent_procs.pop(key, None)  # 清掉坏进程，下次重建
+        return f"[Agent {agent_name} 执行异常: {e}]"
 
 
 # ── 节点 ──
@@ -216,7 +222,7 @@ async def arch_review_node(state: SOPState) -> dict:
     is_pass = "PASS" in result.upper().split("\n")[0]
     status = "PASS ✅" if is_pass else f"REJECT ❌ (第{count}轮)"
     notify = f"🔍 架构审查: {status}"
-    if is_pass or count >= 3:
+    if is_pass or count >= 10:
         notify += CONFIRM_HINT
     return {
         "arch_review_count": count,
@@ -269,7 +275,7 @@ async def code_review_node(state: SOPState) -> dict:
     is_pass = "PASS" in result.upper().split("\n")[0]
     status = "PASS ✅" if is_pass else f"REJECT ❌ (第{count}轮)"
     notify = f"🔍 代码审查: {status}"
-    if is_pass or count >= 6:
+    if is_pass or count >= 10:
         notify += CONFIRM_HINT
     return {
         "code_review_count": count,
@@ -281,10 +287,21 @@ async def code_review_node(state: SOPState) -> dict:
 
 def code_review_route(state: SOPState) -> str:
     if state["review_result"] == "PASS":
-        return "human_confirm_code"
+        return "qa"
     if state["code_review_count"] >= 10:
-        return "human_confirm_code"
+        return "qa"
     return "coder"
+
+
+async def qa_node(state: SOPState) -> dict:
+    """Phase 3.5: QA 写测试"""
+    result = await _run_agent(state, "qa-agent", (
+        f"任务: {state['task_id']}\n需求:\n{state['requirements']}\n\n"
+        f"API 契约:\n{state['api_contract']}\n\n架构规范:\n{state['architecture']}\n\n"
+        f"代码变更:\n{state['code_diff']}\n\n"
+        f"请编写测试用例并运行测试。"
+    ))
+    return {"notify": f"✅ Phase 3.5: QA 测试完成", "code_diff": state["code_diff"] + "\n\n[QA]\n" + result}
 
 
 async def human_confirm_code(state: SOPState) -> dict:
@@ -298,14 +315,28 @@ async def human_confirm_code(state: SOPState) -> dict:
 
 async def deliver_node(state: SOPState) -> dict:
     """Phase 4: 交付"""
+    task_dir = _task_dir(state["task_id"])
     result = await _run_agent(state, "doc-engineer-agent", (
         f"任务: {state['task_id']}\n请生成接口文档和测试发布文档。\n"
-        f"产出目录: {_task_dir(state['task_id'])}"
+        f"产出目录: {task_dir}"
     ))
-    doc_path = os.path.join(_task_dir(state["task_id"]), "06_deliverables", "summary.md")
+    doc_path = os.path.join(task_dir, "06_deliverables", "summary.md")
     with open(doc_path, "w") as f:
         f.write(result)
-    return {"phase": "done", "notify": f"🎉 任务 {state['task_id']} 开发完成！\n产出: {_task_dir(state['task_id'])}"}
+
+    # 汇总所有产物
+    summary = (
+        f"🎉 任务 {state['task_id']} 开发完成！\n\n"
+        f"📁 产出目录: {task_dir}\n"
+        f"📋 需求文档: {task_dir}/01_pm_docs/requirements.md\n"
+        f"📐 API 契约: {task_dir}/02_api_contracts/api.yaml\n"
+        f"🏗️ 架构规范: {task_dir}/03_architecture/arch.md\n"
+        f"🔍 审查日志: {task_dir}/04_review_logs/\n"
+        f"📄 交付文档: {task_dir}/06_deliverables/summary.md\n\n"
+        f"📊 统计: 架构审查 {state.get('arch_review_count', 0)} 轮, "
+        f"代码审查 {state.get('code_review_count', 0)} 轮"
+    )
+    return {"phase": "done", "notify": summary}
 
 
 # ── 构建图 ──
@@ -322,6 +353,7 @@ def build_sop_graph() -> StateGraph:
     g.add_node("human_confirm_arch", human_confirm_arch)
     g.add_node("coder", coder_node)
     g.add_node("code_review", code_review_node)
+    g.add_node("qa", qa_node)
     g.add_node("human_confirm_code", human_confirm_code)
     g.add_node("deliver", deliver_node)
 
@@ -338,6 +370,7 @@ def build_sop_graph() -> StateGraph:
     g.add_conditional_edges("human_confirm_arch", lambda s: s.get("phase", "coder"))
     g.add_edge("coder", "code_review")
     g.add_conditional_edges("code_review", code_review_route)
+    g.add_edge("qa", "human_confirm_code")
     g.add_conditional_edges("human_confirm_code", lambda s: s.get("phase", "deliver"))
     g.add_edge("deliver", END)
 
@@ -416,14 +449,24 @@ class SOPSession:
         )
 
     async def _run_and_get_notify(self, state, config) -> str:
-        """执行图直到 interrupt，返回 notify"""
+        """执行图直到 interrupt，逐步推送中间 notify"""
         self._running = True
+        chat_type = 1 if self._chatid.startswith("dm_") else 2
+        last_notify = ""
         try:
             if state:
-                result = await self._graph.ainvoke(state, config)
+                stream = self._graph.astream(state, config, stream_mode="updates")
             else:
-                result = await self._graph.ainvoke(None, config)
-            return (result or {}).get("notify", "")
+                stream = self._graph.astream(None, config, stream_mode="updates")
+            async for update in stream:
+                # updates 模式：{node_name: {key: value, ...}}
+                for node_name, node_output in update.items():
+                    notify = (node_output.get("notify") or "").strip()
+                    if notify and notify[:50] != last_notify:
+                        last_notify = notify[:50]
+                        log.info("SOP notify [%s] chatid=%s: %s", node_name, self._chatid, notify[:100])
+                        await self._ws.send_msg(self._chatid, chat_type, notify[:2000])
+            return ""  # 中间 notify 已推送，不需要返回
         except Exception as e:
             log.error("SOP 异常 chatid=%s: %s", self._chatid, e)
             return f"❌ SOP 异常: {e}"

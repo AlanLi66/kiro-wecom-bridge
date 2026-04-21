@@ -192,53 +192,34 @@ class Channel:
                     mode = "full"
         seg = StreamSegmenter(self.ws, req_id, stream_id)
 
-        async def _keepalive(interval=10):
-            """每 interval 秒发一个心跳 chunk，防止企微流超时"""
-            try:
-                while True:
-                    await asyncio.sleep(interval)
-                    await self.ws.send_stream(req_id, stream_id, "...", finish=False)
-            except asyncio.CancelledError:
-                pass
-
         try:
-            await self.ws.send_stream(req_id, stream_id, "思考中...", finish=False)
-            heartbeat = asyncio.create_task(_keepalive())
-            _first_chunk = True
+            # Pipeline 路由：仅在 pipeline 专用 chatid 上匹配快捷指令
+            if chat_cfg.get("pipeline"):
+                pipeline_reply = await self._try_pipeline_route(chatid, text)
+                if pipeline_reply:
+                    await self.ws.send_stream(req_id, stream_id, pipeline_reply, finish=True)
+                    return
 
-            async def _feed_and_cancel_heartbeat(chunk):
-                nonlocal _first_chunk
-                heartbeat.cancel()
-                if _first_chunk:
-                    _first_chunk = False
-                    # 第一个 chunk：直接用完整文本替换占位符，跳过 segmenter 的延迟
-                    seg._seg_text = chunk
-                    await self.ws.send_stream(req_id, stream_id, chunk, finish=False)
-                else:
-                    await seg.feed(chunk)
+            await self.ws.send_stream(req_id, stream_id, "🤔", finish=False)
 
             if agent_mode == "single":
                 proc = await self.pool.get_or_create(
                     chatid, agent=chat_cfg.get("agent"),
-                    cwd=chat_cfg.get("cwd", WORK_DIR), mode=mode)
-                result = await proc.send(text, on_chunk=_feed_and_cancel_heartbeat)
-                heartbeat.cancel()
+                    cwd=chat_cfg.get("cwd", WORK_DIR), mode=chat_cfg.get("mode", "full"))
+                result = await proc.send(text, on_chunk=seg.feed)
                 if result:
                     await seg.finish()
             elif agent_mode == "delegate":
                 session = await self._get_delegate(chatid, chat_cfg)
-                result = await session.send_to_main(text, on_chunk=_feed_and_cancel_heartbeat)
-                heartbeat.cancel()
+                result = await session.send_to_main(text, on_chunk=seg.feed)
                 if result:
                     await seg.finish()
             elif agent_mode == "groupchat":
                 session = await self._get_groupchat(chatid, chat_cfg)
-                result = await session.send_from_human(text, on_chunk=_feed_and_cancel_heartbeat)
-                heartbeat.cancel()
+                result = await session.send_from_human(text, on_chunk=seg.feed)
                 if result:
                     await seg.finish()
             elif agent_mode == "teams":
-                heartbeat.cancel()
                 session = await self._get_teams(chatid, chat_cfg)
                 await self.ws.send_stream(req_id, stream_id, "", finish=True)
                 result = await session.send_from_human(text)
@@ -246,29 +227,18 @@ class Channel:
                     chat_type = 1 if chatid.startswith("dm_") else 2
                     await self.ws.send_msg(chatid, chat_type, result[:1500])
             elif agent_mode == "sop":
-                heartbeat.cancel()
                 session = await self._get_sop(chatid, chat_cfg)
                 chat_type = 1 if chatid.startswith("dm_") else 2
                 if session.running:
-                    # 正在执行中，不打断，告知用户
                     await self.ws.send_stream(req_id, stream_id, "⏳ SOP 正在执行中，请等待当前步骤完成...", finish=True)
                 elif session.started:
-                    # interrupt 暂停中，恢复
                     await self.ws.send_stream(req_id, stream_id, "🔄 SOP 继续处理中...", finish=True)
-                    result = await session.resume_and_wait(text)
-                    if result:
-                        for i in range(0, len(result), 2000):
-                            await self.ws.send_msg(chatid, chat_type, result[i:i+2000])
+                    await session.resume_and_wait(text)
                 else:
-                    # 首次启动
                     await self.ws.send_stream(req_id, stream_id, "🚀 SOP 流程启动中...", finish=True)
                     task_id = f"TASK-{int(time.time())}"
-                    result = await session.start_and_wait(task_id, [], text)
-                    if result:
-                        for i in range(0, len(result), 2000):
-                            await self.ws.send_msg(chatid, chat_type, result[i:i+2000])
+                    await session.start_and_wait(task_id, [], text)
             else:
-                heartbeat.cancel()
                 await self.ws.send_stream(req_id, stream_id, f"未知的 agent_mode: {agent_mode}", finish=True)
         except asyncio.CancelledError:
             pass
@@ -277,6 +247,25 @@ class Channel:
             await self.ws.send_stream(req_id, stream_id, f"❌ 处理异常: {e}", finish=True)
 
     # ---- 事件回调 ----
+
+    async def _try_pipeline_route(self, chatid: str, text: str) -> str | None:
+        """尝试将消息路由到 Pipeline Scheduler（仅快捷指令）"""
+        import re, httpx
+        # 提取纯文本（去掉 [userid]: 前缀）
+        m = re.match(r'^\[.+?\](?:\(引用:.*?\))?: (.+)$', text, re.DOTALL)
+        raw = m.group(1) if m else text
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.post("http://127.0.0.1:18901/route", json={
+                    "chatid": chatid, "message": raw,
+                })
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("routed"):
+                        return data["reply"]
+        except Exception:
+            pass  # Scheduler 不可用时静默降级
+        return None
 
     async def _get_delegate(self, chatid: str, chat_cfg: dict) -> DelegateSession:
         if chatid not in self._delegates:
