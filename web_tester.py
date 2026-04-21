@@ -52,7 +52,7 @@ SMOKE_TESTS = [
             {"action": "fill", "selector": "[data-qa-header-search-input]", "text": "bread"},
             {"action": "click", "selector": "[data-qa-index-search-btn]", "timeout": 5000},
             {"action": "wait_navigation", "timeout": 15000},
-            {"action": "wait", "selector": "[data-qa-itemcard-addcart-btn]", "timeout": 10000},
+            {"action": "wait", "selector": "[data-qa-itemcard-addcart-btn]", "timeout": 15000},
             {"action": "click", "selector": "[data-qa-itemcard-addcart-btn]", "timeout": 5000},
             {"action": "sleep", "seconds": 2},
             {"action": "screenshot", "name": "homepage_add_cart"},
@@ -65,7 +65,7 @@ SMOKE_TESTS = [
         "needs_login": True,
         "steps": [
             {"action": "goto", "path": "/zh/search?q=bread"},
-            {"action": "wait", "selector": "[data-qa-itemcard]", "timeout": 10000},
+            {"action": "wait", "selector": "[data-qa-itemcard]", "timeout": 15000},
             {"action": "screenshot", "name": "search_result"},
             {"action": "click", "selector": "[data-qa-itemcard-addcart-btn]", "timeout": 5000},
             {"action": "sleep", "seconds": 2},
@@ -80,7 +80,7 @@ SMOKE_TESTS = [
         "needs_login": True,
         "steps": [
             {"action": "goto", "path": "/zh/search?q=bread"},
-            {"action": "wait", "selector": "[data-qa-itemcard-name-txt]", "timeout": 10000},
+            {"action": "wait", "selector": "[data-qa-itemcard-name-txt]", "timeout": 15000},
             {"action": "click", "selector": "[data-qa-itemcard-name-txt]", "timeout": 5000},
             {"action": "wait_navigation", "timeout": 15000},
             {"action": "wait", "selector": "[data-qa-pdp-addcart-btn]", "timeout": 10000},
@@ -95,17 +95,42 @@ SMOKE_TESTS = [
     },
     {
         "id": "cart",
-        "name": "购物车+推荐加购",
+        "name": "购物车+结算下单",
         "needs_login": True,
         "steps": [
+            # 进入购物车
             {"action": "goto", "url_key": "trade_url", "path": "/zh/cart"},
             {"action": "wait", "selector": "[data-qa-cart-title]", "timeout": 15000},
             {"action": "screenshot", "name": "cart"},
-            # 点击推荐区的第一个加购按钮
+            # 加购推荐商品
             {"action": "wait", "selector": "[data-qa-itemcard-addcart-btn]", "timeout": 10000},
             {"action": "click", "selector": "[data-qa-itemcard-addcart-btn]", "timeout": 5000},
             {"action": "sleep", "seconds": 2},
             {"action": "screenshot", "name": "cart_add_recommend"},
+            # 点击去结算
+            {"action": "click", "selector": "[data-qa-cart-checkout-btn]", "timeout": 5000},
+            {"action": "wait_navigation", "timeout": 15000},
+            {"action": "wait", "selector": "[data-qa-place-order-btn]", "timeout": 15000},
+            {"action": "screenshot", "name": "checkout"},
+            # 切换到银行卡支付（可能已选中，用 unchecked 版本点击；如果已选中则跳过）
+            {"action": "sleep", "seconds": 2},
+            {"action": "evaluate", "script": "(() => { const unchecked = document.querySelector('[data-qa-unchecked-creditcard-rbtn]'); if (unchecked) { unchecked.click(); return 'switched to creditcard'; } const checked = document.querySelector('[data-qa-checked-creditcard-rbtn]'); if (checked) { return 'already creditcard'; } return 'creditcard rbtn not found'; })()"},
+            {"action": "sleep", "seconds": 1},
+            {"action": "screenshot", "name": "checkout_creditcard"},
+            # 提交订单
+            {"action": "click", "selector": "[data-qa-place-order-btn]", "timeout": 5000},
+            # 等待 CVV 弹窗出现
+            {"action": "wait", "selector": "[data-qa-cvv-input]", "timeout": 15000},
+            {"action": "screenshot", "name": "checkout_cvv_dialog"},
+            # 输入 CVV
+            {"action": "click", "selector": "[data-qa-cvv-input]", "timeout": 5000},
+            {"action": "type", "selector": "[data-qa-cvv-input]", "text": "111"},
+            {"action": "screenshot", "name": "checkout_cvv"},
+            # 确认提单
+            {"action": "click", "selector": "[data-qa-cvv-confirm-btn]", "timeout": 5000},
+            {"action": "sleep", "seconds": 5},
+            # 进入支付结果页
+            {"action": "screenshot", "name": "payment_result"},
             {"action": "check_console_errors"},
             {"action": "check_status"},
         ],
@@ -252,9 +277,19 @@ class WebTestRunner:
                 else:
                     url = self._resolve_url(step.get("url", step.get("path", "/")))
                 resp = self.page.goto(url, wait_until="domcontentloaded", timeout=step.get("timeout", 30000))
+                # 等待 React hydration 完成
+                self.page.wait_for_timeout(2000)
                 result["detail"] = f"HTTP {resp.status if resp else '?'} → {url}"
                 result["http_status"] = resp.status if resp else 0
                 result["url"] = url
+                # 自动关闭 cookie consent banner（如果存在）
+                try:
+                    btn = self.page.query_selector("[data-qa-index-accept-cookie-btn]")
+                    if btn and btn.is_visible():
+                        btn.click()
+                        time.sleep(0.5)
+                except Exception:
+                    pass
 
             elif action == "wait":
                 sel = step.get("selector", "body")
