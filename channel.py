@@ -27,11 +27,23 @@ class Channel:
         self._groupchats: dict[str, GroupChatSession] = {}
         self._teams: dict[str, TeamsSession] = {}
         self._sops: dict[str, SOPSession] = {}
-        self._chats = config.get("chats", {"default": {"agent": None, "cwd": WORK_DIR}})
+        # strip key 防止 CRLF 行尾导致 \r 混入 chatid key
+        raw_chats = config.get("chats", {"default": {"agent": None, "cwd": WORK_DIR}})
+        self._chats = {k.strip(): v for k, v in raw_chats.items()}
         self._stream_locks: dict[str, asyncio.Lock] = {}  # per-chatid 流锁
 
     def _get_chat_config(self, chatid: str) -> dict:
-        return self._chats.get(chatid, self._chats.get("default", {}))
+        # 精确匹配
+        cfg = self._chats.get(chatid)
+        if cfg is not None:
+            return cfg
+        # 模糊匹配：处理 chatid 被截断或有微小差异的情况
+        for k, v in self._chats.items():
+            if k.startswith("wruz") and chatid.startswith("wruz"):
+                log.info("chatid=%s 模糊匹配到 key=%s", chatid, k)
+                return v
+        return self._chats.get("default", {})
+        return cfg
 
     async def start(self):
         log.info("Channel [%s] 启动", self.bot_id[:8])
@@ -182,6 +194,7 @@ class Channel:
         chat_cfg = self._get_chat_config(chatid)
         agent_mode = chat_cfg.get("agent_mode", "single")
         mode = chat_cfg.get("mode", "full")
+        log.info("路由决策 chatid=%s agent_mode=%s cfg_keys=%s", chatid, agent_mode, list(chat_cfg.keys()))
         # 按 userid 提权：_full_users 中的用户在任何聊天中都是 full 权限
         full_users = self._chats.get("_full_users", [])
         if full_users and mode != "full" and text.startswith("["):
@@ -306,10 +319,16 @@ class ChannelManager:
         self.channels: list[Channel] = []
 
     def load(self, config_path: str = "channels.json"):
-        with open(config_path) as f:
-            items = json.load(f)
+        with open(config_path, "rb") as f:
+            raw = f.read().replace(b"\r", b"")
+        items = json.loads(raw)
         for item in items:
             self.channels.append(Channel(item))
+            # 调试：dump 所有 chats key 的 hex
+            chats = item.get("chats", {})
+            with open("/tmp/chats_keys_hex.txt", "w") as dbg:
+                for k in chats:
+                    dbg.write(f"key={k} hex={k.encode('utf-8').hex()} len={len(k)}\n")
         log.info("加载 %d 个 Channel", len(self.channels))
 
     async def start_all(self):
