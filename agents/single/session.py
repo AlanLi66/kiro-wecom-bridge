@@ -1,5 +1,5 @@
 """Single 模式 — ProcessPool，per-chatid 单进程"""
-import asyncio, logging, os
+import asyncio, logging, os, time
 from collections import OrderedDict
 
 from agents.process import KiroProcess
@@ -51,6 +51,7 @@ class ProcessPool:
             proc._mode = mode
             effective_cwd = cwd or WORK_DIR
             proc._cwd = effective_cwd
+            proc._last_active = time.monotonic()
             await proc._create_session()
             self._pool[chatid] = proc
             log.info("从预热池分配进程 chatid=%s pid=%d (剩余预热=%d)",
@@ -87,7 +88,8 @@ class ProcessPool:
         await proc.stop()
 
     async def cleanup_idle(self):
-        to_remove = [cid for cid, p in self._pool.items() if p.idle_seconds > self.IDLE_TIMEOUT]
+        to_remove = [cid for cid, p in self._pool.items()
+                     if p.idle_seconds > self.IDLE_TIMEOUT and p._current_task is None]
         for cid in to_remove:
             proc = self._pool.pop(cid)
             log.info("空闲超时清理 chatid=%s idle=%.0fs", cid, proc.idle_seconds)
