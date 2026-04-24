@@ -16,6 +16,7 @@ import subprocess
 import sys
 import json
 import os
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -55,6 +56,31 @@ PROJECTS = [
 
 # 允许 pull 的分支白名单
 PULL_BRANCHES = {"master", "testing", "main"}
+
+# 企微推送配置
+WECOM_SEND_URL = "http://localhost:8900/send"
+WECOM_CHATID = "dm_Alan.Li"
+
+
+def send_wecom(content: str) -> bool:
+    """推送消息到企业微信"""
+    try:
+        data = json.dumps({
+            "chatid": WECOM_CHATID,
+            "content": content,
+            "chat_type": 1,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            WECOM_SEND_URL,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except Exception as e:
+        print(f"⚠️ 企微推送失败: {e}")
+        return False
 
 
 def get_current_branch(project_path: str) -> str | None:
@@ -206,6 +232,34 @@ def main():
 
         print(f"\n{'='*60}")
         print(f"总计: {len(results)} 个项目 | ✅ {len(pulled)} 更新 | ⏭️ {len(skipped)} 跳过 | ❌ {len(errors)} 失败")
+
+    # 企微推送（非 dry-run 且非 json 模式时）
+    if not dry_run and not json_output:
+        pulled = [r for r in results if r["status"] == "ok"]
+        skipped = [r for r in results if r["status"] == "skip"]
+        errors = [r for r in results if r["status"] == "error"]
+
+        updated = [r for r in pulled if "Already up to date" not in r["reason"]]
+        up_to_date = [r for r in pulled if "Already up to date" in r["reason"]]
+
+        lines = [f"📦 **代码同步报告** {now}"]
+        lines.append(f"✅ {len(pulled)} 已同步 | ⏭️ {len(skipped)} 跳过 | ❌ {len(errors)} 失败")
+
+        if updated:
+            lines.append(f"\n🔄 **有更新（{len(updated)}）**:")
+            for r in updated:
+                lines.append(f"  · {r['project']} [{r['branch']}]")
+
+        if errors:
+            lines.append(f"\n❌ **失败（{len(errors)}）**:")
+            for r in errors:
+                lines.append(f"  · {r['project']} — {r['reason'][:80]}")
+
+        if skipped:
+            lines.append(f"\n⏭️ **跳过（{len(skipped)}）**: {', '.join(r['project'] for r in skipped)}")
+
+        msg = "\n".join(lines)
+        send_wecom(msg)
 
 
 if __name__ == "__main__":
