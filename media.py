@@ -93,7 +93,7 @@ async def download_media(media_info: dict, ws=None) -> bytes | None:
 
 
 def save_media(chatid: str, data: bytes, subdir: str, filename: str | None = None) -> str:
-    """保存媒体文件到本地，返回路径"""
+    """保存媒体文件到本地，图片自动压缩，返回路径"""
     save_dir = os.path.join(WORK_DIR, "wecom-sessions", chatid, subdir)
     os.makedirs(save_dir, exist_ok=True)
     if filename:
@@ -105,10 +105,63 @@ def save_media(chatid: str, data: bytes, subdir: str, filename: str | None = Non
     else:
         safe_name = f"{uuid.uuid4().hex[:8]}.bin"
     path = os.path.join(save_dir, safe_name)
+
+    # 图片压缩：限制最大尺寸 1280px，转 JPEG 质量 80
+    if subdir == "images" and is_image(data):
+        compressed = compress_image(data, max_size=1280, quality=80)
+        if compressed:
+            path = os.path.splitext(path)[0] + ".jpg"
+            data = compressed
+
     with open(path, "wb") as f:
         f.write(data)
     log.info("媒体已保存 chatid=%s path=%s size=%dKB", chatid, path, len(data) // 1024)
     return path
+
+
+def compress_image(data: bytes, max_size: int = 1280, quality: int = 80) -> bytes | None:
+    """压缩图片：限制最大边长 + JPEG 压缩。返回压缩后的 bytes，失败返回 None"""
+    try:
+        from PIL import Image
+        import io
+        img = Image.open(io.BytesIO(data))
+        original_size = len(data)
+
+        # GIF 不压缩（可能是动图）
+        if img.format == "GIF":
+            return None
+
+        # 缩放：最大边超过 max_size 时等比缩小
+        w, h = img.size
+        if max(w, h) > max_size:
+            ratio = max_size / max(w, h)
+            new_w, new_h = int(w * ratio), int(h * ratio)
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+            log.info("图片缩放 %dx%d → %dx%d", w, h, new_w, new_h)
+
+        # 转 RGB（去掉 alpha 通道）
+        if img.mode in ("RGBA", "P", "LA"):
+            bg = Image.new("RGB", img.size, (255, 255, 255))
+            if img.mode == "P":
+                img = img.convert("RGBA")
+            bg.paste(img, mask=img.split()[-1] if img.mode == "RGBA" else None)
+            img = bg
+        elif img.mode != "RGB":
+            img = img.convert("RGB")
+
+        # JPEG 压缩
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        compressed = buf.getvalue()
+        log.info("图片压缩 %dKB → %dKB (%.0f%%)", original_size // 1024,
+                 len(compressed) // 1024, len(compressed) / original_size * 100)
+        return compressed
+    except ImportError:
+        log.warning("Pillow 未安装，跳过图片压缩")
+        return None
+    except Exception as e:
+        log.error("图片压缩失败: %s", e)
+        return None
 
 
 async def process_voice(chatid: str, voice_info: dict, ws=None) -> str | None:
