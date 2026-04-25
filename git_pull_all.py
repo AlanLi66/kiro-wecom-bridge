@@ -112,38 +112,14 @@ def get_current_branch(project_path: str) -> str | None:
 
 
 def git_pull(project_path: str, env: dict = None) -> tuple[bool, str]:
-    """执行 git pull，本地有修改时先 stash 再 pull 再 pop"""
+    """执行 git pull，失败时仅记录错误，不做 stash"""
     try:
-        # 检查是否有未提交的修改
-        status = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=project_path, capture_output=True, text=True, timeout=10, env=env,
-        )
-        has_changes = bool(status.stdout.strip())
-
-        # 有修改时先 stash
-        if has_changes:
-            subprocess.run(
-                ["git", "stash", "--quiet"],
-                cwd=project_path, capture_output=True, timeout=10, env=env,
-            )
-
-        # 执行 pull
         result = subprocess.run(
             ["git", "pull", "--ff-only"],
             cwd=project_path, capture_output=True, text=True, timeout=60, env=env,
         )
         output = result.stdout.strip() or result.stderr.strip()
-        success = result.returncode == 0
-
-        # pull 完后恢复 stash
-        if has_changes:
-            subprocess.run(
-                ["git", "stash", "pop", "--quiet"],
-                cwd=project_path, capture_output=True, timeout=10, env=env,
-            )
-
-        return success, output
+        return result.returncode == 0, output
     except subprocess.TimeoutExpired:
         return False, "超时（60s）"
     except Exception as e:
