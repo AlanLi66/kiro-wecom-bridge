@@ -112,10 +112,11 @@ def get_current_branch(project_path: str) -> str | None:
 
 
 def git_pull(project_path: str, env: dict = None) -> tuple[bool, str]:
-    """执行 git pull，成功就成功，失败就记录错误，不做任何代码修改"""
+    """执行 git pull，成功就成功，失败就记录错误，不做任何代码修改。
+    使用 -c core.autocrlf=true 绕过 Windows/WSL 跨文件系统的 CRLF 行尾差异。"""
     try:
         result = subprocess.run(
-            ["git", "pull", "--ff-only"],
+            ["git", "-c", "core.autocrlf=true", "pull", "--ff-only"],
             cwd=project_path, capture_output=True, text=True, timeout=180, env=env,
         )
         output = result.stdout.strip() or result.stderr.strip()
