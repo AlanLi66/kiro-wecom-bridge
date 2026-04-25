@@ -57,9 +57,20 @@ PROJECTS = [
 # 允许 pull 的分支白名单
 PULL_BRANCHES = {"master", "testing", "main"}
 
+# SSH key 路径（WSL 内，从 Windows 侧复制过来的）
+SSH_KEY_PATH = os.path.expanduser("~/.ssh/id_rsa")
+
 # 企微推送配置
 WECOM_SEND_URL = "http://localhost:8900/send"
 WECOM_CHATID = "dm_Alan.Li"
+
+
+def setup_ssh_agent() -> dict:
+    """设置 GIT_SSH_COMMAND 环境变量，指定 SSH key"""
+    env = os.environ.copy()
+    if os.path.exists(SSH_KEY_PATH):
+        env["GIT_SSH_COMMAND"] = f"ssh -i {SSH_KEY_PATH} -o StrictHostKeyChecking=no"
+    return env
 
 
 def send_wecom(content: str) -> bool:
@@ -100,18 +111,39 @@ def get_current_branch(project_path: str) -> str | None:
     return None
 
 
-def git_pull(project_path: str) -> tuple[bool, str]:
-    """执行 git pull，返回 (成功, 输出信息)"""
+def git_pull(project_path: str, env: dict = None) -> tuple[bool, str]:
+    """执行 git pull，本地有修改时先 stash 再 pull 再 pop"""
     try:
+        # 检查是否有未提交的修改
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=project_path, capture_output=True, text=True, timeout=10, env=env,
+        )
+        has_changes = bool(status.stdout.strip())
+
+        # 有修改时先 stash
+        if has_changes:
+            subprocess.run(
+                ["git", "stash", "--quiet"],
+                cwd=project_path, capture_output=True, timeout=10, env=env,
+            )
+
+        # 执行 pull
         result = subprocess.run(
             ["git", "pull", "--ff-only"],
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=60,
+            cwd=project_path, capture_output=True, text=True, timeout=60, env=env,
         )
         output = result.stdout.strip() or result.stderr.strip()
-        return result.returncode == 0, output
+        success = result.returncode == 0
+
+        # pull 完后恢复 stash
+        if has_changes:
+            subprocess.run(
+                ["git", "stash", "pop", "--quiet"],
+                cwd=project_path, capture_output=True, timeout=10, env=env,
+            )
+
+        return success, output
     except subprocess.TimeoutExpired:
         return False, "超时（60s）"
     except Exception as e:
@@ -122,6 +154,9 @@ def main():
     """主函数"""
     dry_run = "--dry-run" in sys.argv
     json_output = "--json" in sys.argv
+
+    # 启动 SSH agent（cron 环境下没有 SSH agent）
+    ssh_env = setup_ssh_agent()
 
     results = []
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -187,7 +222,7 @@ def main():
                 "branch": branch,
             })
         else:
-            success, output = git_pull(project_path)
+            success, output = git_pull(project_path, env=ssh_env)
             results.append({
                 "project": os.path.basename(project_path),
                 "desc": desc,
