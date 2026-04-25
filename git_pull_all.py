@@ -112,33 +112,13 @@ def get_current_branch(project_path: str) -> str | None:
 
 
 def git_pull(project_path: str, env: dict = None) -> tuple[bool, str]:
-    """执行 git pull，失败时仅记录错误。
-    如果因 CRLF 行尾差异导致 pull 失败，先 checkout 恢复再重试一次。"""
+    """执行 git pull，成功就成功，失败就记录错误，不做任何代码修改"""
     try:
         result = subprocess.run(
             ["git", "pull", "--ff-only"],
             cwd=project_path, capture_output=True, text=True, timeout=180, env=env,
         )
         output = result.stdout.strip() or result.stderr.strip()
-
-        # 如果因本地修改失败，尝试 reset 恢复后重试（处理 CRLF 行尾差异）
-        if result.returncode != 0 and "Please commit your changes or stash them" in output:
-            subprocess.run(
-                ["git", "reset", "--hard", "HEAD"],
-                cwd=project_path, capture_output=True, timeout=30, env=env,
-            )
-            subprocess.run(
-                ["git", "clean", "-fd"],
-                cwd=project_path, capture_output=True, timeout=30, env=env,
-            )
-            result = subprocess.run(
-                ["git", "pull", "--ff-only"],
-                cwd=project_path, capture_output=True, text=True, timeout=180, env=env,
-            )
-            output = result.stdout.strip() or result.stderr.strip()
-            if result.returncode == 0:
-                output = "(auto reset) " + output
-
         return result.returncode == 0, output
     except subprocess.TimeoutExpired:
         return False, "超时（180s）"
