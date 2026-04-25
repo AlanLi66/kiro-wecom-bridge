@@ -116,12 +116,12 @@ def git_pull(project_path: str, env: dict = None) -> tuple[bool, str]:
     try:
         result = subprocess.run(
             ["git", "pull", "--ff-only"],
-            cwd=project_path, capture_output=True, text=True, timeout=60, env=env,
+            cwd=project_path, capture_output=True, text=True, timeout=180, env=env,
         )
         output = result.stdout.strip() or result.stderr.strip()
         return result.returncode == 0, output
     except subprocess.TimeoutExpired:
-        return False, "超时（60s）"
+        return False, "超时（180s）"
     except Exception as e:
         return False, str(e)
 
