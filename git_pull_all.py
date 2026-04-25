@@ -9,16 +9,21 @@
   python3 git_pull_all.py --json    # JSON 格式输出（供 agent 解析）
 
 cron 示例（每天凌晨 2:30）：
-  30 2 * * * /mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3 /mnt/i/workspace/kiro-wecom-bridge/git_pull_all.py >> /mnt/i/workspace/kiro-wecom-bridge/logs/git_pull.log 2>&1
+  30 2 * * * /mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3 /mnt/i/workspace/kiro-wecom-bridge/git_pull_all.py 2>&1
 """
 
 import subprocess
 import sys
 import json
 import os
+import glob
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+# 日志目录和保留天数
+LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+LOG_KEEP_DAYS = 2
 
 # 需要保持最新的项目列表（路径 + 说明）
 PROJECTS = [
@@ -94,6 +99,20 @@ def send_wecom(content: str) -> bool:
         return False
 
 
+def cleanup_old_logs():
+    """清理超过 LOG_KEEP_DAYS 天的旧日志文件"""
+    if not os.path.exists(LOG_DIR):
+        return
+    now = datetime.now()
+    for f in glob.glob(os.path.join(LOG_DIR, "git_pull_*.log")):
+        try:
+            mtime = datetime.fromtimestamp(os.path.getmtime(f))
+            if (now - mtime).days >= LOG_KEEP_DAYS:
+                os.remove(f)
+        except Exception:
+            pass
+
+
 def get_current_branch(project_path: str) -> str | None:
     """获取项目当前分支名"""
     try:
@@ -131,6 +150,23 @@ def main():
     """主函数"""
     dry_run = "--dry-run" in sys.argv
     json_output = "--json" in sys.argv
+
+    # 日志轮转：清理超过 LOG_KEEP_DAYS 天的旧日志
+    cleanup_old_logs()
+
+    # 日志写入按日期命名的文件（非 dry-run 且非 json 模式时）
+    log_file = None
+    if not dry_run and not json_output:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        log_path = os.path.join(LOG_DIR, f"git_pull_{datetime.now().strftime('%Y%m%d')}.log")
+        log_file = open(log_path, "a", encoding="utf-8")
+
+    def log_output(msg: str):
+        """同时输出到 stdout 和日志文件"""
+        print(msg)
+        if log_file:
+            log_file.write(msg + "\n")
+            log_file.flush()
 
     # 启动 SSH agent（cron 环境下没有 SSH agent）
     ssh_env = setup_ssh_agent()
@@ -213,8 +249,8 @@ def main():
     if json_output:
         print(json.dumps({"time": now, "results": results}, ensure_ascii=False, indent=2))
     else:
-        print(f"📦 Git Pull All — {now}")
-        print(f"{'='*60}")
+        log_output(f"📦 Git Pull All — {now}")
+        log_output(f"{'='*60}")
 
         pulled = [r for r in results if r["status"] == "ok"]
         skipped = [r for r in results if r["status"] == "skip"]
@@ -222,28 +258,28 @@ def main():
         dry_runs = [r for r in results if r["status"] == "dry_run"]
 
         if dry_runs:
-            print(f"\n🔍 Dry Run（{len(dry_runs)} 个项目将被 pull）:")
+            log_output(f"\n🔍 Dry Run（{len(dry_runs)} 个项目将被 pull）:")
             for r in dry_runs:
-                print(f"  ✅ {r['project']} ({r['desc']}) — {r['reason']}")
+                log_output(f"  ✅ {r['project']} ({r['desc']}) — {r['reason']}")
 
         if pulled:
-            print(f"\n✅ 已更新（{len(pulled)} 个）:")
+            log_output(f"\n✅ 已更新（{len(pulled)} 个）:")
             for r in pulled:
                 status = "已是最新" if "Already up to date" in r["reason"] else "有更新"
-                print(f"  · {r['project']} ({r['desc']}) [{r['branch']}] — {status}")
+                log_output(f"  · {r['project']} ({r['desc']}) [{r['branch']}] — {status}")
 
         if skipped:
-            print(f"\n⏭️ 跳过（{len(skipped)} 个）:")
+            log_output(f"\n⏭️ 跳过（{len(skipped)} 个）:")
             for r in skipped:
-                print(f"  · {r['project']} ({r['desc']}) — {r['reason']}")
+                log_output(f"  · {r['project']} ({r['desc']}) — {r['reason']}")
 
         if errors:
-            print(f"\n❌ 失败（{len(errors)} 个）:")
+            log_output(f"\n❌ 失败（{len(errors)} 个）:")
             for r in errors:
-                print(f"  · {r['project']} ({r['desc']}) — {r['reason']}")
+                log_output(f"  · {r['project']} ({r['desc']}) — {r['reason']}")
 
-        print(f"\n{'='*60}")
-        print(f"总计: {len(results)} 个项目 | ✅ {len(pulled)} 更新 | ⏭️ {len(skipped)} 跳过 | ❌ {len(errors)} 失败")
+        log_output(f"\n{'='*60}")
+        log_output(f"总计: {len(results)} 个项目 | ✅ {len(pulled)} 更新 | ⏭️ {len(skipped)} 跳过 | ❌ {len(errors)} 失败")
 
     # 企微推送（非 dry-run 且非 json 模式时）
     if not dry_run and not json_output:
@@ -272,6 +308,10 @@ def main():
 
         msg = "\n".join(lines)
         send_wecom(msg)
+
+    # 关闭日志文件
+    if log_file:
+        log_file.close()
 
 
 if __name__ == "__main__":
