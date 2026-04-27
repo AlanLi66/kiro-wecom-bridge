@@ -5,6 +5,7 @@ from ws_client import WsClient
 from stream import StreamSegmenter
 from guard import check_injection
 from media import download_media, save_media, is_image, aes_decrypt_image, process_voice, process_file
+import chat_stats
 from agents.single.session import ProcessPool
 from agents.delegate.session import DelegateSession
 from agents.groupchat.session import GroupChatSession
@@ -53,6 +54,9 @@ class Channel:
         if not chatid:
             chatid = f"dm_{userid}"
         log.info("收到消息 req=%s chatid=%s userid=%s type=%s", req_id, chatid, userid, msgtype)
+
+        # 记录对话统计（元数据，不含消息原文）
+        chat_stats.record(chatid, userid, msgtype)
 
         # 提取引用消息
         quote_text = ""
