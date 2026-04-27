@@ -28,7 +28,6 @@ class Channel:
         self._groupchats: dict[str, GroupChatSession] = {}
         self._teams: dict[str, TeamsSession] = {}
         self._sops: dict[str, SOPSession] = {}
-        self._teams_cfg: dict = config.get("teams", {})  # bot 级别的 teams 全局配置
         # strip key 防止 CRLF 行尾导致 \r 混入 chatid key
         raw_chats = config.get("chats", {"default": {"agent": None, "cwd": WORK_DIR}})
         self._chats = {k.strip(): v for k, v in raw_chats.items()}
@@ -296,13 +295,7 @@ class Channel:
 
     async def _get_teams(self, chatid: str, chat_cfg: dict) -> TeamsSession:
         if chatid not in self._teams:
-            # 合并 bot 级别 teams 配置 + 当前 chat 配置
-            merged = {**chat_cfg}
-            if self._teams_cfg:
-                merged.setdefault("lead", self._teams_cfg.get("lead", "team-lead"))
-                merged.setdefault("agents", self._teams_cfg.get("agents", []))
-                merged.setdefault("max_parallel", self._teams_cfg.get("max_parallel", 3))
-            session = TeamsSession(chatid, merged, self.ws, pool=self.pool)
+            session = TeamsSession(chatid, chat_cfg, self.ws, pool=self.pool)
             await session.start()
             self._teams[chatid] = session
         return self._teams[chatid]
