@@ -190,13 +190,6 @@ class Channel:
         agent_mode = chat_cfg.get("agent_mode", "single")
         mode = chat_cfg.get("mode", "full")
 
-        # @team 前缀检测：动态切换到 teams 模式
-        stripped = text.strip()
-        if stripped.lower().startswith("@team"):
-            agent_mode = "teams"
-            text = stripped[5:].strip()
-            log.info("@team 触发 teams 模式 chatid=%s", chatid)
-
         log.info("路由决策 chatid=%s agent_mode=%s cfg_keys=%s", chatid, agent_mode, list(chat_cfg.keys()))
         # 按 userid 提权：_full_users 中的用户在任何聊天中都是 full 权限
         full_users = self._chats.get("_full_users", [])
