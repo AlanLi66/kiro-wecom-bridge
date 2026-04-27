@@ -579,6 +579,39 @@ def main():
     # 打印统计
     print()
     print_stats(conn)
+
+    # 企微推送（非 dry-run 且非 stats 模式时）
+    if not stats_only and not target_project:
+        # 按平台汇总
+        c = conn.cursor()
+        c.execute("""SELECT platform, SUM(total_events), COUNT(*) FROM scans
+                     WHERE scan_time = ? GROUP BY platform ORDER BY platform""", (scan_time,))
+        platform_stats = c.fetchall()
+
+        lines = [f"📊 **埋点库同步完成** {scan_time}"]
+        lines.append(f"共 {total_events} 个事件 | {len(projects_to_scan)} 个项目")
+        if platform_stats:
+            lines.append("")
+            for plat, evt_count, proj_count in platform_stats:
+                lines.append(f"  · {plat}: {evt_count} 事件 ({proj_count} 项目)")
+
+        try:
+            import urllib.request
+            data = json.dumps({
+                "chatid": "dm_Alan.Li",
+                "content": "\n".join(lines),
+                "chat_type": 1,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                "http://localhost:8900/send",
+                data=data,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            urllib.request.urlopen(req, timeout=10)
+        except Exception as e:
+            print(f"⚠️ 企微推送失败: {e}")
+
     conn.close()
 
 
