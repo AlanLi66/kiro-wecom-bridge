@@ -9,3 +9,4 @@ db_config.json
 # Web Quality 报告和数据
 reports/
 web_test_cookies/
+logs/
