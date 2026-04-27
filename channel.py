@@ -27,23 +27,18 @@ class Channel:
         self._groupchats: dict[str, GroupChatSession] = {}
         self._teams: dict[str, TeamsSession] = {}
         self._sops: dict[str, SOPSession] = {}
+        self._teams_cfg: dict = config.get("teams", {})  # bot 级别的 teams 全局配置
         # strip key 防止 CRLF 行尾导致 \r 混入 chatid key
         raw_chats = config.get("chats", {"default": {"agent": None, "cwd": WORK_DIR}})
         self._chats = {k.strip(): v for k, v in raw_chats.items()}
         self._stream_locks: dict[str, asyncio.Lock] = {}  # per-chatid 流锁
 
     def _get_chat_config(self, chatid: str) -> dict:
-        # 精确匹配
+        """精确匹配 chatid → chat 配置，未匹配走 default"""
         cfg = self._chats.get(chatid)
         if cfg is not None:
             return cfg
-        # 模糊匹配：处理 chatid 被截断或有微小差异的情况
-        for k, v in self._chats.items():
-            if k.startswith("wruz") and chatid.startswith("wruz"):
-                log.info("chatid=%s 模糊匹配到 key=%s", chatid, k)
-                return v
         return self._chats.get("default", {})
-        return cfg
 
     async def start(self):
         log.info("Channel [%s] 启动", self.bot_id[:8])
@@ -194,6 +189,14 @@ class Channel:
         chat_cfg = self._get_chat_config(chatid)
         agent_mode = chat_cfg.get("agent_mode", "single")
         mode = chat_cfg.get("mode", "full")
+
+        # @team 前缀检测：动态切换到 teams 模式
+        stripped = text.strip()
+        if stripped.lower().startswith("@team"):
+            agent_mode = "teams"
+            text = stripped[5:].strip()
+            log.info("@team 触发 teams 模式 chatid=%s", chatid)
+
         log.info("路由决策 chatid=%s agent_mode=%s cfg_keys=%s", chatid, agent_mode, list(chat_cfg.keys()))
         # 按 userid 提权：_full_users 中的用户在任何聊天中都是 full 权限
         full_users = self._chats.get("_full_users", [])
@@ -296,7 +299,13 @@ class Channel:
 
     async def _get_teams(self, chatid: str, chat_cfg: dict) -> TeamsSession:
         if chatid not in self._teams:
-            session = TeamsSession(chatid, chat_cfg, self.ws, pool=self.pool)
+            # 合并 bot 级别 teams 配置 + 当前 chat 配置
+            merged = {**chat_cfg}
+            if self._teams_cfg:
+                merged.setdefault("lead", self._teams_cfg.get("lead", "team-lead"))
+                merged.setdefault("agents", self._teams_cfg.get("agents", []))
+                merged.setdefault("max_parallel", self._teams_cfg.get("max_parallel", 3))
+            session = TeamsSession(chatid, merged, self.ws, pool=self.pool)
             await session.start()
             self._teams[chatid] = session
         return self._teams[chatid]
