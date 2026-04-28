@@ -33,7 +33,9 @@ PROJECTS = [
         "platform": "PC",
         "tech": "PHP/Laravel",
         "path": "/mnt/c/Alan/workspace/ec-website-nb",
-        "keywords": ["pageSceneHandler", "sensors", "yamidata", "dataLayer"],
+        # 精确关键词：sensorsCommonTrack 是主要埋点函数，sensors.track 是底层调用
+        "keywords": ["sensorsCommonTrack", "sensors\\.track", "pageSceneHandler",
+                     "yamidata\\.push", "dataLayer\\.push"],
         "includes": ["*.php", "*.blade.php", "*.js"],
         "excludes": ["vendor", "node_modules", ".git", "storage", "bootstrap"],
     },
@@ -42,7 +44,8 @@ PROJECTS = [
         "platform": "PC",
         "tech": "Next.js",
         "path": "/mnt/c/Alan/workspace/ec-website-next",
-        "keywords": ["track", "analytics", "gtag", "dataLayer"],
+        # Next.js 用 track({name: AnalyticsEventNameMap.XXX}) 模式
+        "keywords": ["AnalyticsEventNameMap", "track({", "gtag(", "dataLayer\\.push"],
         "includes": ["*.tsx", "*.ts", "*.js", "*.jsx"],
         "excludes": ["node_modules", ".next", ".git", "dist"],
     },
@@ -51,7 +54,8 @@ PROJECTS = [
         "platform": "PC",
         "tech": "PHP/Laravel",
         "path": "/mnt/c/Alan/workspace/ec-website-customer-nb",
-        "keywords": ["pageSceneHandler", "sensors", "yamidata", "dataLayer"],
+        "keywords": ["sensorsCommonTrack", "sensors\\.track", "pageSceneHandler",
+                     "yamidata\\.push", "dataLayer\\.push"],
         "includes": ["*.php", "*.blade.php", "*.js"],
         "excludes": ["vendor", "node_modules", ".git", "storage", "bootstrap"],
     },
@@ -60,7 +64,7 @@ PROJECTS = [
         "platform": "PC",
         "tech": "Next.js",
         "path": "/mnt/c/Alan/workspace/ec-website-customer-next",
-        "keywords": ["track", "analytics", "gtag", "dataLayer"],
+        "keywords": ["AnalyticsEventNameMap", "track({", "gtag(", "dataLayer\\.push"],
         "includes": ["*.tsx", "*.ts", "*.js", "*.jsx"],
         "excludes": ["node_modules", ".next", ".git", "dist"],
     },
@@ -69,7 +73,8 @@ PROJECTS = [
         "platform": "PC",
         "tech": "PHP/Laravel",
         "path": "/mnt/c/Alan/workspace/ec-website-trade-nb",
-        "keywords": ["pageSceneHandler", "sensors", "yamidata", "dataLayer"],
+        "keywords": ["sensorsCommonTrack", "sensors\\.track", "pageSceneHandler",
+                     "yamidata\\.push", "dataLayer\\.push"],
         "includes": ["*.php", "*.blade.php", "*.js"],
         "excludes": ["vendor", "node_modules", ".git", "storage", "bootstrap"],
     },
@@ -79,7 +84,9 @@ PROJECTS = [
         "platform": "H5",
         "tech": "Nuxt.js",
         "path": "/mnt/c/Alan/workspace/ec-mobilesite-nb",
-        "keywords": ["\\$track", "sensors", "yamidata"],
+        # H5 用 sensorsCommonTrack(EVENT_XXX, {...}) 和 trackEvent 模式
+        "keywords": ["sensorsCommonTrack", "trackEvent", "sensors\\.track",
+                     "\\$track", "yamidata\\.push"],
         "includes": ["*.vue", "*.js", "*.ts"],
         "excludes": ["node_modules", ".nuxt", ".output", ".git", "dist"],
     },
@@ -88,7 +95,8 @@ PROJECTS = [
         "platform": "H5",
         "tech": "Nuxt.js",
         "path": "/mnt/c/Alan/workspace/ec-mobilesite-ssr",
-        "keywords": ["\\$track", "sensors", "yamidata"],
+        "keywords": ["sensorsCommonTrack", "trackEvent", "sensors\\.track",
+                     "\\$track", "yamidata\\.push"],
         "includes": ["*.vue", "*.js", "*.ts"],
         "excludes": ["node_modules", ".nuxt", ".output", ".git", "dist"],
     },
@@ -97,7 +105,8 @@ PROJECTS = [
         "platform": "H5",
         "tech": "Vue",
         "path": "/mnt/c/Alan/workspace/ec-mobilesite-rma",
-        "keywords": ["sensors", "yamidata"],
+        "keywords": ["sensorsCommonTrack", "trackEvent", "sensors\\.track",
+                     "yamidata\\.push"],
         "includes": ["*.vue", "*.js"],
         "excludes": ["node_modules", ".git", "dist"],
     },
@@ -108,7 +117,7 @@ PROJECTS = [
         "tech": "Flutter",
         "path": "/mnt/c/Alan/workspace/mobile_flutter",
         "search_path": "/mnt/c/Alan/workspace/mobile_flutter/lib",
-        "keywords": ["track", "tracker", "TrackEvent"],
+        "keywords": ["TrackEvent", "tracker\\.track", "track("],
         "includes": ["*.dart"],
         "excludes": ["build", ".dart_tool", ".git", ".ios", ".android"],
     },
@@ -118,7 +127,7 @@ PROJECTS = [
         "tech": "Java/Android",
         "path": "/mnt/i/workspace/mobile_android",
         "search_path": "/mnt/i/workspace/mobile_android/linden/src/main/java",
-        "keywords": ["Analyst", "sensors", "track", "AnalyticsEventNameConst"],
+        "keywords": ["Analyst", "AnalyticsEventNameConst", "sensors\\.track"],
         "includes": ["*.java"],
         "excludes": ["build", ".idea", ".git", ".gradle", ".scannerwork", "gpu_lib"],
     },
@@ -128,7 +137,7 @@ PROJECTS = [
         "tech": "Swift/iOS",
         "path": "/mnt/i/workspace/mobile_ios",
         "search_path": "/mnt/i/workspace/mobile_ios/Yamibuy",
-        "keywords": ["track", "sensors", "analytics", "YMBAnalytics"],
+        "keywords": ["YMBAnalytics", "sensors\\.track", "track("],
         "includes": ["*.swift", "*.m", "*.h"],
         "excludes": ["Pods", ".git", "build", "sonar-reports", "fastlane",
                      "YamibuyTests", "YamibuyUITests"],
@@ -137,21 +146,39 @@ PROJECTS = [
 
 # 埋点平台识别规则
 TRACKING_PLATFORMS = {
-    "sensors": "神策",
+    "sensors.track": "神策",
+    "sensorsCommonTrack": "神策",
     "$track": "神策",
+    "trackEvent": "神策",
     "yamidata": "亚米",
     "dataLayer": "星辰",
     "gtag": "星辰",
-    "analytics": "星辰",
+    "AnalyticsEventNameMap": "神策&亚米&星辰",  # Next.js 统一封装，同时上报多平台
 }
 
 # 事件名提取正则（覆盖各平台调用模式）
 EVENT_PATTERNS = [
+    # === Next.js track({name: AnalyticsEventNameMap.XXX}) 模式 ===
+    # track({ name: AnalyticsEventNameMap.EVENT_CLICK, ... })
+    re.compile(r"""track\s*\(\s*\{\s*name\s*:\s*AnalyticsEventNameMap\.(\w+)"""),
+
+    # === PHP/Laravel sensorsCommonTrack 模式 ===
+    # sensorsCommonTrack("event_click", {...})
+    re.compile(r"""sensorsCommonTrack\s*\(\s*['"]([^'"]+)['"]"""),
+    # sensorsCommonTrack(EVENT_CLICK, {...}) — 常量引用
+    re.compile(r"""sensorsCommonTrack\s*\(\s*([A-Z][A-Z_0-9]+)"""),
+
+    # === H5 trackEvent 模式 ===
+    # trackEvent("event_click", {...}) 或 trackEvent(EVENT_CLICK, {...})
+    re.compile(r"""trackEvent\s*\(\s*['"]([^'"]+)['"]"""),
+    re.compile(r"""trackEvent\s*\(\s*([A-Z][A-Z_0-9]+)"""),
+
+    # === 通用 SDK 调用模式 ===
     # sensors.track('event_name', {...})
     re.compile(r"""(?:sensors|sa)\.track\s*\(\s*['"]([^'"]+)['"]"""),
     # this.$track('event_name', {...})
     re.compile(r"""\$track\s*\(\s*['"]([^'"]+)['"]"""),
-    # track('event_name', {...}) — 但排除 import/require 等
+    # track('event_name', {...}) — 字符串参数模式
     re.compile(r"""(?<!\w)track\s*\(\s*['"]([^'"]+)['"]"""),
     # yamidata.push({event: 'event_name'})
     re.compile(r"""yamidata\.push\s*\(\s*\{[^}]*event\s*:\s*['"]([^'"]+)['"]"""),
@@ -159,6 +186,8 @@ EVENT_PATTERNS = [
     re.compile(r"""dataLayer\.push\s*\(\s*\{[^}]*event\s*:\s*['"]([^'"]+)['"]"""),
     # gtag('event', 'event_name')
     re.compile(r"""gtag\s*\(\s*['"]event['"]\s*,\s*['"]([^'"]+)['"]"""),
+
+    # === Flutter 模式 ===
     # TrackEvent('event_name', {...})
     re.compile(r"""TrackEvent\s*\(\s*['"]([^'"]+)['"]"""),
     # Analyst.track('event_name')
@@ -167,8 +196,14 @@ EVENT_PATTERNS = [
     re.compile(r"""static\s+const\s+String\s+(\w+)\s*=\s*['"]([^'"]+)['"]"""),
     # Flutter 常量引用: eventName: SensorTrackEvent.event_xxx
     re.compile(r"""eventName\s*:\s*\w+TrackEvent\.(\w+)"""),
-    # pageSceneHandler:场景名（PHP 路由中间件）
+
+    # === PHP 路由中间件 ===
+    # pageSceneHandler:场景名
     re.compile(r"""pageSceneHandler[:\s]+['"]?(\w+)['"]?"""),
+
+    # === H5 事件常量定义 ===
+    # EVENT_CLICK: 'EVENT_CLICK' 或 EVENT_ITEM_ADDCART: 'event_item_addcart'
+    re.compile(r"""(EVENT_\w+)\s*:\s*['"]([^'"]+)['"]"""),
 ]
 
 # 属性提取正则（从传参对象中提取 key）
@@ -319,23 +354,38 @@ def parse_block(block: list[dict], filepath: str, base_line: int, project: dict)
     # 提取事件名
     for pattern in EVENT_PATTERNS:
         for m in pattern.finditer(full_code):
-            # Flutter 常量定义有两个 group：变量名和字符串值，取字符串值
+            # Flutter 常量定义和 H5 事件常量有两个 group：变量名和字符串值
             if m.lastindex and m.lastindex >= 2:
                 event_name = m.group(2)
+                const_name = m.group(1)
             else:
                 event_name = m.group(1)
+                const_name = None
+
             # 过滤掉明显不是事件名的匹配（如 'true', 'false', 'function' 等）
             if event_name in ("true", "false", "null", "undefined", "function",
-                              "return", "const", "let", "var", "if", "else"):
+                              "return", "const", "let", "var", "if", "else",
+                              "import", "export", "from", "require", "module",
+                              "class", "extends", "implements", "interface",
+                              "new", "this", "super", "static", "async", "await",
+                              "try", "catch", "finally", "throw", "switch", "case",
+                              "default", "break", "continue", "for", "while", "do"):
                 continue
             if len(event_name) < 3 or len(event_name) > 80:
+                continue
+            # 过滤掉纯大写常量引用名（如 EVENT_CLICK），保留实际事件名
+            # 但 AnalyticsEventNameMap.EVENT_XXX 模式的常量名本身就是事件名
+            # 所以只过滤掉不以 EVENT_ 开头的纯大写名
+            if event_name.isupper() and not event_name.startswith("EVENT_"):
                 continue
 
             # 识别埋点平台
             platforms = set()
             for keyword, platform in TRACKING_PLATFORMS.items():
                 if keyword in full_code:
-                    platforms.add(platform)
+                    # 支持复合平台标识（如 "神策&亚米&星辰"）
+                    for p in platform.split("&"):
+                        platforms.add(p)
             tracking_platform = "&".join(sorted(platforms)) if platforms else "待确认"
 
             # 提取属性
@@ -378,8 +428,12 @@ def parse_block(block: list[dict], filepath: str, base_line: int, project: dict)
 def extract_attrs(code: str, start_pos: int) -> list[dict]:
     """从事件调用后的代码中提取属性"""
     attrs = []
-    # 找到传参对象的开始 {
-    brace_start = code.find("{", start_pos)
+    # 找到传参对象的开始 { — 优先找 properties: { 模式（Next.js）
+    props_match = re.search(r'properties\s*:\s*\{', code[start_pos:])
+    if props_match:
+        brace_start = start_pos + props_match.end() - 1
+    else:
+        brace_start = code.find("{", start_pos)
     if brace_start == -1:
         return attrs
 
@@ -392,7 +446,8 @@ def extract_attrs(code: str, start_pos: int) -> list[dict]:
 
         # 过滤掉 JS 关键字和非属性名
         if attr_name in ("event", "type", "msgtype", "method", "url", "headers",
-                         "data", "params", "config", "options", "callback"):
+                         "data", "params", "config", "options", "callback",
+                         "name", "memo", "properties"):
             continue
 
         # 推断类型
