@@ -33,7 +33,15 @@ curl -s -X POST http://localhost:8900/scheduler/jobs \
 - `bot_index`: 可选，多机器人时指定用哪个 channel，默认 0
 - `description`: 可选，任务描述
 
-### 查看所有任务
+### 查看所有任务（推荐：含 crontab + 最新结果）
+
+```bash
+/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3 /mnt/i/workspace/kiro-wecom-bridge/cron_dashboard.py --json
+```
+
+这会返回 scheduler 任务 + 系统 crontab 任务 + 各扫描最新结果的完整 JSON。
+
+如果只需要 scheduler 管理的任务：
 
 ```bash
 curl -s http://localhost:8900/scheduler/jobs | python3 -m json.tool

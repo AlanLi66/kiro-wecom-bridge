@@ -221,6 +221,16 @@ async def delete_job(job_id: str):
     return {"ok": True}
 
 
+# ---- 定时任务仪表盘 API ----
+
+@app.get("/cron/dashboard")
+async def cron_dashboard():
+    """返回所有定时任务 + 最新执行结果（供企微主动查询）"""
+    from cron_dashboard import build_report, format_markdown
+    report = build_report()
+    return {"ok": True, "report": report, "markdown": format_markdown(report)}
+
+
 # ---- 禅道 Bug 轮询控制 API ----
 
 class ZentaoToggleRequest(BaseModel):
