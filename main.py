@@ -233,7 +233,7 @@ async def cron_dashboard():
 
 # ---- Agent 看板 ----
 
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page():
@@ -247,14 +247,6 @@ async def dashboard_api():
     """看板数据 JSON API"""
     from dashboard import get_full_dashboard
     return get_full_dashboard(cm)
-
-@app.get("/dashboard/screenshot")
-async def dashboard_screenshot():
-    """返回最新的看板截图"""
-    img_path = os.path.join(os.path.dirname(__file__), "reports", "dashboard", "latest.png")
-    if not os.path.exists(img_path):
-        return {"ok": False, "error": "截图不存在，请先执行 dashboard_screenshot.py"}
-    return FileResponse(img_path, media_type="image/png")
 
 
 # ---- 禅道 Bug 轮询控制 API ----
