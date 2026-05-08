@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Alan Bot Dashboard</title>
+<style>
+:root {
+  --bg: #0f1117;
+  --card: #1a1d27;
+  --border: #2a2d3a;
+  --text: #e4e4e7;
+  --text-dim: #8b8d97;
+  --accent: #6366f1;
+  --green: #22c55e;
+  --yellow: #eab308;
+  --red: #ef4444;
+  --blue: #3b82f6;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  padding: 24px;
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.header h1 {
+  font-size: 24px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header .status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  animation: pulse 2s infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 16px;
+}
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+}
+.card-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.card-title .icon { font-size: 16px; }
+.metric-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.metric {
+  flex: 1;
+  min-width: 80px;
+}
+.metric-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.metric-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.metric-value.green { color: var(--green); }
+.metric-value.yellow { color: var(--yellow); }
+.metric-value.red { color: var(--red); }
+.metric-value.blue { color: var(--blue); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+th {
+  text-align: left;
+  padding: 8px 6px;
+  color: var(--text-dim);
+  font-weight: 500;
+  border-bottom: 1px solid var(--border);
+}
+td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+tr:last-child td { border-bottom: none; }
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+.badge-yellow { background: rgba(234,179,8,0.15); color: var(--yellow); }
+.badge-red { background: rgba(239,68,68,0.15); color: var(--red); }
+.badge-blue { background: rgba(59,130,246,0.15); color: var(--blue); }
+.badge-gray { background: rgba(139,141,151,0.15); color: var(--text-dim); }
+.progress-bar {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: 8px;
+}
+.progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
+}
+.hour-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 60px;
+  margin-top: 12px;
+}
+.hour-bar {
+  flex: 1;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+  min-width: 4px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.hour-bar:hover { opacity: 1; }
+.refresh-btn {
+  background: var(--accent);
+  border: none;
+  color: white;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.refresh-btn:hover { opacity: 0.85; }
+.loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-dim);
+}
+.error-msg {
+  color: var(--red);
+  font-size: 13px;
+  padding: 8px;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🤖 Alan Bot Dashboard</h1>
+  <div class="status">
+    <div class="status-dot" id="statusDot"></div>
+    <span id="lastUpdate">加载中...</span>
+    <button class="refresh-btn" onclick="refresh()">刷新</button>
+  </div>
+</div>
+
+<div class="grid" id="dashboard">
+  <div class="loading">正在加载看板数据...</div>
+</div>
+
+<script>
+const API_BASE = window.location.origin;
+let data = null;
+
+async function fetchData() {
+  try {
+    const resp = await fetch(`${API_BASE}/dashboard/api`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    data = await resp.json();
+    render();
+    document.getElementById('lastUpdate').textContent = `更新于 ${data.generated_at.split('T').pop() || data.generated_at.split(' ').pop()}`;
+    document.getElementById('statusDot').style.background = '#22c55e';
+  } catch (e) {
+    document.getElementById('dashboard').innerHTML = `<div class="error-msg">❌ 加载失败: ${e.message}</div>`;
+    document.getElementById('statusDot').style.background = '#ef4444';
+  }
+}
+
+function render() {
+  if (!data) return;
+  const html = [
+    renderSystemCard(),
+    renderProcessPoolCard(),
+    renderChatStatsCard(),
+    renderCronTasksCard(),
+    renderScanResultsCard(),
+    renderZentaoCard(),
+    renderMemoryCard(),
+  ].join('');
+  document.getElementById('dashboard').innerHTML = html;
+}
+
+function renderSystemCard() {
+  const s = data.system;
+  return `
+    <div class="card">
+      <div class="card-title"><span class="icon">💻</span> 系统状态</div>
+      <div class="metric-row">
+        <div class="metric">
+          <div class="metric-value blue">${s.platform || 'N/A'}</div>
+          <div class="metric-label">操作系统</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">${s.python || 'N/A'}</div>
+          <div class="metric-label">Python</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">${s.uptime_hours ? s.uptime_hours + 'h' : 'N/A'}</div>
+          <div class="metric-label">运行时间</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:8px">
+        主机: ${s.hostname || 'N/A'} | 时间: ${s.time || 'N/A'}
+      </div>
+    </div>`;
+}
+
+function renderProcessPoolCard() {
+  const pools = data.process_pool.pools;
+  let rows = '';
+  pools.forEach(pool => {
+    pool.processes.forEach(p => {
+      const status = p.alive ? '<span class="badge badge-green">运行中</span>' : '<span class="badge badge-red">已停止</span>';
+      const idle = p.idle_seconds < 60 ? `${Math.round(p.idle_seconds)}s` : `${Math.round(p.idle_seconds/60)}m`;
+      rows += `<tr><td>${p.chatid}</td><td>${status}</td><td>${idle}</td><td>${p.pid || '-'}</td></tr>`;
+    });
+  });
+  const pool = pools[0] || { active_count: 0, warm_count: 0, max_procs: 10 };
+  const usage = pool.active_count / pool.max_procs * 100;
+  return `
+    <div class="card">
+      <div class="card-title"><span class="icon">⚡</span> 进程池</div>
+      <div class="metric-row">
+        <div class="metric">
+          <div class="metric-value ${pool.active_count >= pool.max_procs ? 'red' : 'green'}">${pool.active_count}</div>
+          <div class="metric-label">活跃进程</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value blue">${pool.warm_count}</div>
+          <div class="metric-label">预热池</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">${pool.max_procs}</div>
+          <div class="metric-label">最大容量</div>
+        </div>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${usage}%;background:${usage > 80 ? 'var(--red)' : 'var(--accent)'}"></div>
+      </div>
+      ${rows ? `<table style="margin-top:12px"><tr><th>ChatID</th><th>状态</th><th>空闲</th><th>PID</th></tr>${rows}</table>` : '<div style="font-size:13px;color:var(--text-dim);margin-top:12px">暂无活跃进程</div>'}
+    </div>`;
+}
+
+function renderChatStatsCard() {
+  const s = data.chat_stats;
+  // 小时图表
+  let maxCount = Math.max(...(s.by_hour || []).map(h => h.count), 1);
+  let bars = '';
+  for (let i = 0; i < 24; i++) {
+    const found = (s.by_hour || []).find(h => h.hour === i);
+    const count = found ? found.count : 0;
+    const height = count / maxCount * 100;
+    bars += `<div class="hour-bar" style="height:${Math.max(height, 2)}%" title="${i}:00 - ${count}条"></div>`;
+  }
+  return `
+    <div class="card">
+      <div class="card-title"><span class="icon">💬</span> 对话统计</div>
+      <div class="metric-row">
+        <div class="metric">
+          <div class="metric-value green">${s.today}</div>
+          <div class="metric-label">今日消息</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value blue">${s.week}</div>
+          <div class="metric-label">本周消息</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">${s.total}</div>
+          <div class="metric-label">累计消息</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">今日消息分布（按小时）</div>
+      <div class="hour-chart">${bars}</div>
+    </div>`;
+}
+
+function renderCronTasksCard() {
+  const tasks = data.cron_tasks;
+  const all = [...(tasks.crontab || []), ...(tasks.scheduler || [])];
+  let rows = all.map(t => {
+    const type = t.type === 'scheduler' ? '<span class="badge badge-blue">Scheduler</span>' : '<span class="badge badge-gray">Crontab</span>';
+    const enabled = t.type === 'scheduler' && t.enabled === false ? '<span class="badge badge-yellow">暂停</span>' : '';
+    return `<tr><td>${t.schedule}</td><td>${t.label}</td><td>${type} ${enabled}</td></tr>`;
+  }).join('');
+  return `
+    <div class="card">
+      <div class="card-title"><span class="icon">🕐</span> 定时任务 (${all.length})</div>
+      <table>
+        <tr><th>时间</th><th>任务</th><th>类型</th></tr>
+        ${rows || '<tr><td colspan="3" style="color:var(--text-dim)">暂无任务</td></tr>'}
+      </table>
+    </div>`;
+}
+
+function renderScanResultsCard() {
+  const r = data.scan_results;
+  let rows = '';
+
+  if (r.ada) {
+    const badge = r.ada.errors > 0 ? 'badge-yellow' : 'badge-green';
+    rows += `<tr><td>ADA 无障碍</td><td><span class="badge ${badge}">${r.ada.errors}错误 / ${r.ada.warnings}警告</span></td><td>${r.ada.files}文件</td><td>${r.ada.time?.split(' ')[0] || ''}</td></tr>`;
+  }
+  if (r.cwv) {
+    const badge = r.cwv.errors > 0 ? 'badge-yellow' : 'badge-green';
+    rows += `<tr><td>CWV 性能</td><td><span class="badge ${badge}">${r.cwv.errors}错误 / ${r.cwv.warnings}警告</span></td><td>${r.cwv.files}文件</td><td>${r.cwv.time?.split(' ')[0] || ''}</td></tr>`;
+  }
+  if (r.web_test) {
+    const badge = r.web_test.failed > 0 ? 'badge-red' : 'badge-green';
+    rows += `<tr><td>${r.web_test.name}</td><td><span class="badge ${badge}">${r.web_test.passed}通过 / ${r.web_test.failed}失败</span></td><td>${r.web_test.total}用例</td><td>${r.web_test.time?.split(' ')[0] || ''}</td></tr>`;
+  }
+  if (r.git_pull) {
+    rows += `<tr><td>代码同步</td><td colspan="2">${r.git_pull.summary || ''}</td><td>${r.git_pull.time || ''}</td></tr>`;
+  }
+
+  return `
+    <div class="card">
+      <div class="card-title"><span class="icon">📊</span> 扫描结果</div>
+      <table>
+        <tr><th>项目</th><th>状态</th><th>规模</th><th>时间</th></tr>
+        ${rows || '<tr><td colspan="4" style="color:var(--text-dim)">暂无扫描数据</td></tr>'}
+      </table>
+    </div>`;
+}
+
+function renderZentaoCard() {
+  const z = data.zentao;
+  const status = z.enabled ? '<span class="badge badge-green">运行中</span>' : '<span class="badge badge-gray">已关闭</span>';
+  return `
+    <div class="card">
+      <div class="card-title"><span class="icon">🐛</span> 禅道 Bug 监控</div>
+      <div class="metric-row">
+        <div class="metric">
+          <div class="metric-value">${status}</div>
+          <div class="metric-label">状态</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">${z.poll_count || 0}</div>
+          <div class="metric-label">轮询次数</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value ${z.new_bugs_found > 0 ? 'yellow' : ''}">${z.new_bugs_found || 0}</div>
+          <div class="metric-label">发现新 Bug</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:8px">
+        间隔: ${z.interval_seconds || 900}s | 已跟踪: ${z.seen_count || 0}个 | 上次: ${z.last_poll || '未执行'}
+      </div>
+    </div>`;
+}
+
+function renderMemoryCard() {
+  const m = data.memory;
+  const dbs = m.databases || [];
+  let totalEntities = dbs.reduce((s, d) => s + d.entities, 0);
+  let totalRelations = dbs.reduce((s, d) => s + d.relations, 0);
+  let rows = dbs.map(d => `<tr><td>${d.chatid}</td><td>${d.entities}</td><td>${d.relations}</td></tr>`).join('');
+  return `
+    <div class="card">
+      <div class="card-title"><span class="icon">🧠</span> 长期记忆</div>
+      <div class="metric-row">
+        <div class="metric">
+          <div class="metric-value green">${totalEntities}</div>
+          <div class="metric-label">实体总数</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value blue">${totalRelations}</div>
+          <div class="metric-label">关系总数</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">${dbs.length}</div>
+          <div class="metric-label">知识库数</div>
+        </div>
+      </div>
+      ${rows ? `<table style="margin-top:12px"><tr><th>ChatID</th><th>实体</th><th>关系</th></tr>${rows}</table>` : ''}
+    </div>`;
+}
+
+function refresh() {
+  document.getElementById('statusDot').style.background = 'var(--yellow)';
+  fetchData();
+}
+
+// 首次加载
+fetchData();
+// 每 30 秒自动刷新
+setInterval(fetchData, 30000);
+</script>
+</body>
+</html>

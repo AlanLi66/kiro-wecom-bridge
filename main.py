@@ -231,6 +231,24 @@ async def cron_dashboard():
     return {"ok": True, "report": report, "markdown": format_markdown(report)}
 
 
+# ---- Agent 看板 ----
+
+from fastapi.responses import HTMLResponse, FileResponse
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard_page():
+    """Agent 实时看板 HTML 页面"""
+    html_path = os.path.join(os.path.dirname(__file__), "static", "dashboard.html")
+    with open(html_path, "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/dashboard/api")
+async def dashboard_api():
+    """看板数据 JSON API"""
+    from dashboard import get_full_dashboard
+    return get_full_dashboard(cm)
+
+
 # ---- 禅道 Bug 轮询控制 API ----
 
 class ZentaoToggleRequest(BaseModel):
