@@ -462,6 +462,16 @@ def main():
     if alerts:
         msg = "🚨 ADA 代码扫描退化告警\n\n" + "\n".join(alerts) + f"\n\n📄 报告: {report}"
         notify_wecom(args.chatid, msg)
+    else:
+        # 每次扫描完推送结果摘要
+        rule_map = {r.id: r for r in RULES}
+        total_errors = sum(1 for d in results.values() for i in d.get("issues", []) if rule_map.get(i["rule"], Rule("", "", "", "error", "")).severity == "error")
+        total_warnings = total - total_errors
+        total_files = sum(d.get("files", 0) for d in results.values())
+        msg = (f"♿ **ADA 扫描完成** {scan_time}\n"
+               f"{len(results)} 项目 | {total_files} 文件 | "
+               f"{total_errors} 错误 / {total_warnings} 警告")
+        notify_wecom(args.chatid, msg)
 
     cleanup_old_reports(keep_days=3)
 
