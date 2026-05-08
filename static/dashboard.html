@@ -302,6 +302,26 @@ function renderChatStatsCard() {
     const height = count / maxCount * 100;
     bars += `<div class="hour-bar" style="height:${Math.max(height, 2)}%" title="${i}:00 - ${count}条"></div>`;
   }
+  // 用户排行
+  let userRows = (s.by_user || []).map((u, i) => {
+    const maxU = s.by_user[0]?.count || 1;
+    const pct = Math.round(u.count / maxU * 100);
+    return `<tr>
+      <td>${u.userid}</td>
+      <td style="width:50%"><div style="background:var(--accent);height:6px;border-radius:3px;width:${pct}%;opacity:0.7"></div></td>
+      <td style="text-align:right">${u.count}</td>
+    </tr>`;
+  }).join('');
+  // 全部时间用户排行
+  let userAllRows = (s.by_user_all || []).map((u, i) => {
+    const maxU = s.by_user_all[0]?.count || 1;
+    const pct = Math.round(u.count / maxU * 100);
+    return `<tr>
+      <td>${u.userid}</td>
+      <td style="width:50%"><div style="background:var(--green);height:6px;border-radius:3px;width:${pct}%;opacity:0.7"></div></td>
+      <td style="text-align:right">${u.count}</td>
+    </tr>`;
+  }).join('');
   return `
     <div class="card">
       <div class="card-title"><span class="icon">💬</span> 对话统计</div>
@@ -319,8 +339,16 @@ function renderChatStatsCard() {
           <div class="metric-label">累计消息</div>
         </div>
       </div>
-      <div style="font-size:12px;color:var(--text-dim);margin-top:4px">今日消息分布（按小时）</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:12px">今日消息分布（按小时）</div>
       <div class="hour-chart">${bars}</div>
+      ${userRows ? `
+      <div style="font-size:12px;color:var(--text-dim);margin-top:16px">用户使用排行（本周）</div>
+      <table style="margin-top:8px"><tr><th>用户</th><th></th><th style="text-align:right">次数</th></tr>${userRows}</table>
+      ` : ''}
+      ${userAllRows ? `
+      <div style="font-size:12px;color:var(--text-dim);margin-top:16px">用户使用排行（累计）</div>
+      <table style="margin-top:8px"><tr><th>用户</th><th></th><th style="text-align:right">次数</th></tr>${userAllRows}</table>
+      ` : ''}
     </div>`;
 }
 

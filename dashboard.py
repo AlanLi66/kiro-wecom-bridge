@@ -69,6 +69,11 @@ def get_chat_stats() -> dict:
             (week_start,)
         ).fetchall()
 
+        # 按用户统计（全部时间）
+        by_user_all = conn.execute(
+            "SELECT userid, COUNT(*) as cnt FROM chat_logs GROUP BY userid ORDER BY cnt DESC LIMIT 10"
+        ).fetchall()
+
         # 按小时统计（今天）
         by_hour = conn.execute(
             "SELECT CAST((ts - ?) / 3600 AS INTEGER) as hour, COUNT(*) as cnt "
@@ -82,10 +87,11 @@ def get_chat_stats() -> dict:
             "week": week,
             "total": total,
             "by_user": [{"userid": r["userid"], "count": r["cnt"]} for r in by_user],
+            "by_user_all": [{"userid": r["userid"], "count": r["cnt"]} for r in by_user_all],
             "by_hour": [{"hour": r["hour"], "count": r["cnt"]} for r in by_hour],
         }
     except Exception as e:
-        return {"today": 0, "week": 0, "total": 0, "by_user": [], "by_hour": [], "error": str(e)}
+        return {"today": 0, "week": 0, "total": 0, "by_user": [], "by_user_all": [], "by_hour": [], "error": str(e)}
 
 
 def get_cron_tasks() -> dict:
