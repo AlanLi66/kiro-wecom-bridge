@@ -181,6 +181,35 @@ tr:last-child td { border-bottom: none; }
   font-size: 13px;
   padding: 8px;
 }
+/* Tooltip */
+.tip {
+  position: relative;
+  cursor: help;
+  border-bottom: 1px dashed var(--text-dim);
+}
+.tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #2d3040;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 400;
+  padding: 8px 12px;
+  border-radius: 6px;
+  white-space: nowrap;
+  max-width: 320px;
+  white-space: normal;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.tip:hover::after { opacity: 1; }
 </style>
 </head>
 <body>
@@ -234,7 +263,7 @@ function renderSystemCard() {
   const s = data.system;
   return `
     <div class="card">
-      <div class="card-title"><span class="icon">💻</span> 系统状态</div>
+      <div class="card-title"><span class="icon">💻</span> <span class="tip" data-tip="kiro-wecom-bridge 服务运行在 WSL2 Ubuntu 中，通过 systemd 托管">系统状态</span></div>
       <div class="metric-row">
         <div class="metric">
           <div class="metric-value blue">${s.platform || 'N/A'}</div>
@@ -246,7 +275,7 @@ function renderSystemCard() {
         </div>
         <div class="metric">
           <div class="metric-value">${s.uptime_hours ? s.uptime_hours + 'h' : 'N/A'}</div>
-          <div class="metric-label">运行时间</div>
+          <div class="metric-label"><span class="tip" data-tip="WSL 系统的运行时间（非 bridge 进程时间）">运行时间</span></div>
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:8px">
@@ -269,19 +298,19 @@ function renderProcessPoolCard() {
   const usage = pool.active_count / pool.max_procs * 100;
   return `
     <div class="card">
-      <div class="card-title"><span class="icon">⚡</span> 进程池</div>
+      <div class="card-title"><span class="icon">⚡</span> <span class="tip" data-tip="每个企微用户对话会分配一个独立的 kiro-cli 进程，进程池管理这些进程的生命周期">进程池</span></div>
       <div class="metric-row">
         <div class="metric">
           <div class="metric-value ${pool.active_count >= pool.max_procs ? 'red' : 'green'}">${pool.active_count}</div>
-          <div class="metric-label">活跃进程</div>
+          <div class="metric-label"><span class="tip" data-tip="当前正在服务用户的 kiro-cli 进程数，每个进程对应一个 chatid">活跃进程</span></div>
         </div>
         <div class="metric">
           <div class="metric-value blue">${pool.warm_count}</div>
-          <div class="metric-label">预热池</div>
+          <div class="metric-label"><span class="tip" data-tip="预先启动的空闲进程，新用户消息进来时可以立即分配，无需等待冷启动（约 3-5 秒）">预热池</span></div>
         </div>
         <div class="metric">
           <div class="metric-value">${pool.max_procs}</div>
-          <div class="metric-label">最大容量</div>
+          <div class="metric-label"><span class="tip" data-tip="同时允许的最大活跃进程数，超出后会淘汰最久未使用的进程（LRU）">最大容量</span></div>
         </div>
       </div>
       <div class="progress-bar">
@@ -324,7 +353,7 @@ function renderChatStatsCard() {
   }).join('');
   return `
     <div class="card">
-      <div class="card-title"><span class="icon">💬</span> 对话统计</div>
+      <div class="card-title"><span class="icon">💬</span> <span class="tip" data-tip="统计用户通过企微发送给 Bot 的消息数量（不含 Bot 回复和 cron 触发）">对话统计</span></div>
       <div class="metric-row">
         <div class="metric">
           <div class="metric-value green">${s.today}</div>
@@ -336,7 +365,7 @@ function renderChatStatsCard() {
         </div>
         <div class="metric">
           <div class="metric-value">${s.total}</div>
-          <div class="metric-label">累计消息</div>
+          <div class="metric-label"><span class="tip" data-tip="自 Bot 上线以来收到的所有用户消息总数">累计消息</span></div>
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:12px">今日消息分布（按小时）</div>
@@ -356,13 +385,13 @@ function renderCronTasksCard() {
   const tasks = data.cron_tasks;
   const all = [...(tasks.crontab || []), ...(tasks.scheduler || [])];
   let rows = all.map(t => {
-    const type = t.type === 'scheduler' ? '<span class="badge badge-blue">Scheduler</span>' : '<span class="badge badge-gray">Crontab</span>';
+    const type = t.type === 'scheduler' ? '<span class="badge badge-blue" title="通过 Bridge API 管理的任务，触发后由 Agent 执行 prompt，消耗对话额度">Scheduler</span>' : '<span class="badge badge-gray" title="直接写在系统 crontab 中的任务，到时间直接执行脚本，不经过 Agent，零额度消耗">Crontab</span>';
     const enabled = t.type === 'scheduler' && t.enabled === false ? '<span class="badge badge-yellow">暂停</span>' : '';
     return `<tr><td>${t.schedule}</td><td>${t.label}</td><td>${type} ${enabled}</td></tr>`;
   }).join('');
   return `
     <div class="card">
-      <div class="card-title"><span class="icon">🕐</span> 定时任务 (${all.length})</div>
+      <div class="card-title"><span class="icon">🕐</span> <span class="tip" data-tip="Crontab = 系统级直接执行脚本（零消耗）；Scheduler = 通过 Agent 执行 prompt（消耗对话额度）">定时任务 (${all.length})</span></div>
       <table>
         <tr><th>时间</th><th>任务</th><th>类型</th></tr>
         ${rows || '<tr><td colspan="3" style="color:var(--text-dim)">暂无任务</td></tr>'}
@@ -376,18 +405,18 @@ function renderScanResultsCard() {
 
   if (r.ada) {
     const badge = r.ada.errors > 0 ? 'badge-yellow' : 'badge-green';
-    rows += `<tr><td>ADA 无障碍</td><td><span class="badge ${badge}">${r.ada.errors}错误 / ${r.ada.warnings}警告</span></td><td>${r.ada.files}文件</td><td>${r.ada.time?.split(' ')[0] || ''}</td></tr>`;
+    rows += `<tr><td><span class="tip" data-tip="WCAG 无障碍合规扫描：检查 img alt、表单 label、aria 属性、语义标签等，确保残障用户可正常使用网站">ADA 无障碍</span></td><td><span class="badge ${badge}">${r.ada.errors}错误 / ${r.ada.warnings}警告</span></td><td>${r.ada.files}文件</td><td>${r.ada.time?.split(' ')[0] || ''}</td></tr>`;
   }
   if (r.cwv) {
     const badge = r.cwv.errors > 0 ? 'badge-yellow' : 'badge-green';
-    rows += `<tr><td>CWV 性能</td><td><span class="badge ${badge}">${r.cwv.errors}错误 / ${r.cwv.warnings}警告</span></td><td>${r.cwv.files}文件</td><td>${r.cwv.time?.split(' ')[0] || ''}</td></tr>`;
+    rows += `<tr><td><span class="tip" data-tip="Core Web Vitals 性能扫描：检查影响 LCP/CLS/INP 的代码模式，如 img 缺 width/height、缺 lazy loading、同步 script 等">CWV 性能</span></td><td><span class="badge ${badge}">${r.cwv.errors}错误 / ${r.cwv.warnings}警告</span></td><td>${r.cwv.files}文件</td><td>${r.cwv.time?.split(' ')[0] || ''}</td></tr>`;
   }
   if (r.web_test) {
     const badge = r.web_test.failed > 0 ? 'badge-red' : 'badge-green';
-    rows += `<tr><td>${r.web_test.name}</td><td><span class="badge ${badge}">${r.web_test.passed}通过 / ${r.web_test.failed}失败</span></td><td>${r.web_test.total}用例</td><td>${r.web_test.time?.split(' ')[0] || ''}</td></tr>`;
+    rows += `<tr><td><span class="tip" data-tip="Playwright 驱动的端到端测试：模拟真实用户操作（首页/搜索/PDP/购物车/个人中心），检查页面是否正常加载">${r.web_test.name}</span></td><td><span class="badge ${badge}">${r.web_test.passed}通过 / ${r.web_test.failed}失败</span></td><td>${r.web_test.total}用例</td><td>${r.web_test.time?.split(' ')[0] || ''}</td></tr>`;
   }
   if (r.git_pull) {
-    rows += `<tr><td>代码同步</td><td colspan="2">${r.git_pull.summary || ''}</td><td>${r.git_pull.time || ''}</td></tr>`;
+    rows += `<tr><td><span class="tip" data-tip="每天凌晨自动 git pull 所有项目的 master/testing 分支，保持本地代码最新，供扫描和分析使用">代码同步</span></td><td colspan="2">${r.git_pull.summary || ''}</td><td>${r.git_pull.time || ''}</td></tr>`;
   }
 
   return `
@@ -405,7 +434,7 @@ function renderZentaoCard() {
   const status = z.enabled ? '<span class="badge badge-green">运行中</span>' : '<span class="badge badge-gray">已关闭</span>';
   return `
     <div class="card">
-      <div class="card-title"><span class="icon">🐛</span> 禅道 Bug 监控</div>
+      <div class="card-title"><span class="icon">🐛</span> <span class="tip" data-tip="定期轮询禅道系统，发现新分配给我的 Bug 时自动分析代码定位问题并推送到企微">禅道 Bug 监控</span></div>
       <div class="metric-row">
         <div class="metric">
           <div class="metric-value">${status}</div>
@@ -413,15 +442,15 @@ function renderZentaoCard() {
         </div>
         <div class="metric">
           <div class="metric-value">${z.poll_count || 0}</div>
-          <div class="metric-label">轮询次数</div>
+          <div class="metric-label"><span class="tip" data-tip="自开启监控以来，已执行的轮询检查次数">轮询次数</span></div>
         </div>
         <div class="metric">
           <div class="metric-value ${z.new_bugs_found > 0 ? 'yellow' : ''}">${z.new_bugs_found || 0}</div>
-          <div class="metric-label">发现新 Bug</div>
+          <div class="metric-label"><span class="tip" data-tip="本轮监控期间发现的新 Bug 数量（已触发 Agent 分析）">发现新 Bug</span></div>
         </div>
       </div>
       <div style="font-size:12px;color:var(--text-dim);margin-top:8px">
-        间隔: ${z.interval_seconds || 900}s | 已跟踪: ${z.seen_count || 0}个 | 上次: ${z.last_poll || '未执行'}
+        <span class="tip" data-tip="每隔多少秒检查一次禅道是否有新 Bug">间隔: ${z.interval_seconds || 900}s</span> | <span class="tip" data-tip="已记录的 Bug ID 数量，这些 Bug 不会重复推送">已跟踪: ${z.seen_count || 0}个</span> | 上次: ${z.last_poll || '未执行'}
       </div>
     </div>`;
 }
@@ -434,19 +463,19 @@ function renderMemoryCard() {
   let rows = dbs.map(d => `<tr><td>${d.chatid}</td><td>${d.entities}</td><td>${d.relations}</td></tr>`).join('');
   return `
     <div class="card">
-      <div class="card-title"><span class="icon">🧠</span> 长期记忆</div>
+      <div class="card-title"><span class="icon">🧠</span> <span class="tip" data-tip="基于 SQLite 的知识图谱，自动从对话中提取并记住人名、项目、服务、技术决策等信息，跨会话可检索">长期记忆</span></div>
       <div class="metric-row">
         <div class="metric">
           <div class="metric-value green">${totalEntities}</div>
-          <div class="metric-label">实体总数</div>
+          <div class="metric-label"><span class="tip" data-tip="记住的独立概念节点：人名、项目名、服务名、技术方案、业务术语等">实体总数</span></div>
         </div>
         <div class="metric">
           <div class="metric-value blue">${totalRelations}</div>
-          <div class="metric-label">关系总数</div>
+          <div class="metric-label"><span class="tip" data-tip="实体之间的关联，如「Alan → 负责 → ec-website-next」「ec-so → 依赖 → central-so」">关系总数</span></div>
         </div>
         <div class="metric">
           <div class="metric-value">${dbs.length}</div>
-          <div class="metric-label">知识库数</div>
+          <div class="metric-label"><span class="tip" data-tip="每个 chatid（用户/群）拥有独立的记忆数据库，互相隔离">知识库数</span></div>
         </div>
       </div>
       ${rows ? `<table style="margin-top:12px"><tr><th>ChatID</th><th>实体</th><th>关系</th></tr>${rows}</table>` : ''}
