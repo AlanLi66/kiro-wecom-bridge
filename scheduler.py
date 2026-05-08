@@ -29,14 +29,20 @@ def _db():
     return conn
 
 
+JOBS_DIR = os.path.join(SESSIONS_DIR, "scheduler-jobs")
+
+
 def _build_curl(job_id: str, chatid: str, prompt: str, bot_index: int) -> str:
+    # 将 payload 写入文件，crontab 中用 -d @file 引用，避免 command too long
+    os.makedirs(JOBS_DIR, exist_ok=True)
+    payload_path = os.path.join(JOBS_DIR, f"{job_id}.json")
     payload = json.dumps({"chatid": chatid, "prompt": prompt, "bot_index": bot_index}, ensure_ascii=False)
-    # shell 单引号内无法转义单引号，用 '"'"' 拼接法处理
-    safe_payload = payload.replace("'", "'\"'\"'")
+    with open(payload_path, "w", encoding="utf-8") as f:
+        f.write(payload)
     return (
         f"curl -s -X POST http://127.0.0.1:{BRIDGE_PORT}/cron/trigger "
         f"-H 'Content-Type: application/json' "
-        f"-d '{safe_payload}' "
+        f"-d @{payload_path} "
         f">> /tmp/kiro-scheduler.log 2>&1 {CRONTAB_TAG}{job_id}"
     )
 
