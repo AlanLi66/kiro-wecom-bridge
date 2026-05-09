@@ -10,20 +10,20 @@ log = logging.getLogger(__name__)
 WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot")
 DB_PATH = os.path.join(WORK_DIR, "wecom-sessions", "chat_stats.db")
 
-_local = threading.local()
+_lock = threading.Lock()
+_conn: sqlite3.Connection = None
 
 
 def _get_conn() -> sqlite3.Connection:
-    """每个线程复用一个连接，避免多线程共享"""
-    conn = getattr(_local, "conn", None)
-    if conn is None:
+    """进程级单例连接，线程安全（SQLite 在 WSL /mnt/ 上无法可靠创建多连接）"""
+    global _conn
+    if _conn is None:
         os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
-        conn = sqlite3.connect(DB_PATH, timeout=5)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        _init_tables(conn)
-        _local.conn = conn
-    return conn
+        _conn = sqlite3.connect(DB_PATH, timeout=5, check_same_thread=False)
+        _conn.execute("PRAGMA journal_mode=WAL")
+        _conn.execute("PRAGMA synchronous=NORMAL")
+        _init_tables(_conn)
+    return _conn
 
 
 def _init_tables(conn: sqlite3.Connection):
@@ -47,11 +47,19 @@ def _init_tables(conn: sqlite3.Connection):
 def record(chatid: str, userid: str, msg_type: str = "text", msg_len: int = 0):
     """记录一条消息元数据，失败不影响主流程"""
     try:
-        conn = _get_conn()
-        conn.execute(
-            "INSERT INTO chat_logs (chatid, userid, msg_type, msg_len, ts) VALUES (?, ?, ?, ?, ?)",
-            (chatid, userid, msg_type, msg_len, int(time.time())),
-        )
-        conn.commit()
+        with _lock:
+            conn = _get_conn()
+            conn.execute(
+                "INSERT INTO chat_logs (chatid, userid, msg_type, msg_len, ts) VALUES (?, ?, ?, ?, ?)",
+                (chatid, userid, msg_type, msg_len, int(time.time())),
+            )
+            conn.commit()
     except Exception as e:
         log.warning("chat_stats 写入失败: %s", e)
+
+
+def query(sql: str, params: tuple = ()) -> list:
+    """通用查询接口，供 dashboard 等模块复用同一连接"""
+    with _lock:
+        conn = _get_conn()
+        return conn.execute(sql, params).fetchall()

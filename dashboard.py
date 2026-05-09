@@ -44,51 +44,49 @@ def get_zentao_status() -> dict:
 
 
 def get_chat_stats() -> dict:
-    """获取对话统计"""
+    """获取对话统计（复用 chat_stats 模块的单例连接，避免 WSL /mnt/ 上 SQLite 锁文件问题）"""
     if not os.path.exists(CHAT_STATS_DB):
         return {"today": 0, "week": 0, "total": 0, "by_user": [], "by_hour": []}
 
     try:
-        conn = sqlite3.connect(CHAT_STATS_DB)
-        conn.row_factory = sqlite3.Row
+        from chat_stats import query
 
         now = int(time.time())
         today_start = now - (now % 86400) - 8 * 3600  # UTC+8 今天 0 点
         week_start = today_start - 6 * 86400
 
         # 今日消息数
-        today = conn.execute("SELECT COUNT(*) as c FROM chat_logs WHERE ts >= ?", (today_start,)).fetchone()["c"]
+        today = query("SELECT COUNT(*) FROM chat_logs WHERE ts >= ?", (today_start,))[0][0]
         # 本周消息数
-        week = conn.execute("SELECT COUNT(*) as c FROM chat_logs WHERE ts >= ?", (week_start,)).fetchone()["c"]
+        week = query("SELECT COUNT(*) FROM chat_logs WHERE ts >= ?", (week_start,))[0][0]
         # 总消息数
-        total = conn.execute("SELECT COUNT(*) as c FROM chat_logs").fetchone()["c"]
+        total = query("SELECT COUNT(*) FROM chat_logs")[0][0]
 
         # 按用户统计（本周）
-        by_user = conn.execute(
+        by_user = query(
             "SELECT userid, COUNT(*) as cnt FROM chat_logs WHERE ts >= ? GROUP BY userid ORDER BY cnt DESC LIMIT 10",
             (week_start,)
-        ).fetchall()
+        )
 
         # 按用户统计（全部时间）
-        by_user_all = conn.execute(
+        by_user_all = query(
             "SELECT userid, COUNT(*) as cnt FROM chat_logs GROUP BY userid ORDER BY cnt DESC LIMIT 10"
-        ).fetchall()
+        )
 
         # 按小时统计（今天）
-        by_hour = conn.execute(
+        by_hour = query(
             "SELECT CAST((ts - ?) / 3600 AS INTEGER) as hour, COUNT(*) as cnt "
             "FROM chat_logs WHERE ts >= ? GROUP BY hour ORDER BY hour",
             (today_start, today_start)
-        ).fetchall()
+        )
 
-        conn.close()
         return {
             "today": today,
             "week": week,
             "total": total,
-            "by_user": [{"userid": r["userid"], "count": r["cnt"]} for r in by_user],
-            "by_user_all": [{"userid": r["userid"], "count": r["cnt"]} for r in by_user_all],
-            "by_hour": [{"hour": r["hour"], "count": r["cnt"]} for r in by_hour],
+            "by_user": [{"userid": r[0], "count": r[1]} for r in by_user],
+            "by_user_all": [{"userid": r[0], "count": r[1]} for r in by_user_all],
+            "by_hour": [{"hour": r[0], "count": r[1]} for r in by_hour],
         }
     except Exception as e:
         return {"today": 0, "week": 0, "total": 0, "by_user": [], "by_user_all": [], "by_hour": [], "error": str(e)}
