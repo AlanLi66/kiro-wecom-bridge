@@ -112,6 +112,31 @@ def get_scan_results() -> dict:
     }
 
 
+def get_debate_status(cm) -> dict:
+    """获取辩论模式状态"""
+    sessions = []
+    for ch in cm.channels:
+        for chatid, session in ch._debates.items():
+            info = {
+                "chatid": chatid,
+                "running": session.running,
+                "preset": session._preset["name"] if session._preset else "未知",
+                "turns": session._debate_log.turn_count() if session._debate_log else 0,
+            }
+            sessions.append(info)
+    return {
+        "active_count": sum(1 for s in sessions if s["running"]),
+        "sessions": sessions,
+        "presets": [
+            {"id": "code-review", "name": "Code Review", "trigger": "辩论review PR链接/仓库:分支", "desc": "严格派 vs 务实派，禁止在 Critical 问题上妥协"},
+            {"id": "tech-decision", "name": "技术方案决策", "trigger": "辩论方案 主题描述", "desc": "激进派 vs 保守派，量化 Cost vs Benefit"},
+            {"id": "requirement", "name": "需求评审", "trigger": "辩论需求 需求描述", "desc": "产品经理 vs 技术负责人，引入资源约束"},
+            {"id": "security", "name": "安全攻防", "trigger": "辩论安全 系统/代码描述", "desc": "攻击者 vs 防御者，穷举攻击路径"},
+            {"id": "free", "name": "自由辩论", "trigger": "辩论 任意话题", "desc": "正方 vs 反方，杠精模式前10轮禁止认同"},
+        ],
+    }
+
+
 def get_memory_stats() -> dict:
     """获取记忆系统统计"""
     stats = []
@@ -162,5 +187,6 @@ def get_full_dashboard(cm) -> dict:
         "cron_tasks": get_cron_tasks(),
         "scan_results": get_scan_results(),
         "memory": get_memory_stats(),
+        "debate": get_debate_status(cm),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }

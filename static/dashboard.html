@@ -252,6 +252,7 @@ function render() {
     renderSystemCard(),
     renderProcessPoolCard(),
     renderChatStatsCard(),
+    renderDebateCard(),
     renderCronTasksCard(),
     renderScanResultsCard(),
     renderZentaoCard(),
@@ -453,6 +454,49 @@ function renderZentaoCard() {
       <div style="font-size:12px;color:var(--text-dim);margin-top:8px">
         <span class="tip" data-tip="每隔多少秒检查一次禅道是否有新 Bug">间隔: ${z.interval_seconds || 900}s</span> | <span class="tip" data-tip="已记录的 Bug ID 数量，这些 Bug 不会重复推送">已跟踪: ${z.seen_count || 0}个</span> | 上次: ${z.last_poll || '未执行'}
       </div>
+    </div>`;
+}
+
+function renderDebateCard() {
+  const d = data.debate || {};
+  const presets = d.presets || [];
+  const sessions = d.sessions || [];
+  const activeCount = d.active_count || 0;
+
+  let presetRows = presets.map(p => `<tr>
+    <td><span class="badge badge-blue">${p.name}</span></td>
+    <td style="font-family:monospace;font-size:12px">${p.trigger}</td>
+    <td style="font-size:12px;color:var(--text-dim)">${p.desc}</td>
+  </tr>`).join('');
+
+  let sessionRows = sessions.map(s => {
+    const status = s.running ? '<span class="badge badge-green">进行中</span>' : '<span class="badge badge-gray">已结束</span>';
+    return `<tr><td>${s.chatid}</td><td>${s.preset}</td><td>${status}</td><td>${s.turns}轮</td></tr>`;
+  }).join('');
+
+  return `
+    <div class="card">
+      <div class="card-title"><span class="icon">🎭</span> <span class="tip" data-tip="两个独立 Agent 进程辩论，实时推送企微。支持 Code Review、技术决策、需求评审、安全攻防、自由辩论五种场景，各有独立收敛策略">辩论模式</span></div>
+      <div class="metric-row">
+        <div class="metric">
+          <div class="metric-value ${activeCount > 0 ? 'green' : ''}">${activeCount}</div>
+          <div class="metric-label">进行中</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value">${presets.length}</div>
+          <div class="metric-label">预设场景</div>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:12px">触发方式（企微发送）</div>
+      <table style="margin-top:8px">
+        <tr><th>场景</th><th>命令</th><th>说明</th></tr>
+        ${presetRows}
+      </table>
+      <div style="font-size:12px;color:var(--text-dim);margin-top:12px">控制：发「停止辩论」结束 | 辩论中发消息=插话</div>
+      ${sessionRows ? `
+      <div style="font-size:12px;color:var(--text-dim);margin-top:16px">会话记录</div>
+      <table style="margin-top:8px"><tr><th>ChatID</th><th>场景</th><th>状态</th><th>轮次</th></tr>${sessionRows}</table>
+      ` : ''}
     </div>`;
 }
 
