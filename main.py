@@ -440,6 +440,24 @@ async def debate_stop(req: DebateStopRequest):
         return {"ok": False, "error": str(e)}
 
 
+# ---- 分支逐个 Review API ----
+
+class BranchReviewRequest(BaseModel):
+    chatid: str = "dm_Alan.Li"
+    bot_index: int = 0
+
+
+@app.post("/cron/branch-review")
+async def branch_review_start(req: BranchReviewRequest):
+    """启动分支逐个 Review（高消息量版）"""
+    if req.bot_index >= len(cm.channels):
+        return {"ok": False, "error": f"bot_index {req.bot_index} 超出范围"}
+    ch = cm.channels[req.bot_index]
+    from agents.branch_reviewer import run_branch_review
+    asyncio.create_task(run_branch_review(req.chatid, ch.pool, ch.ws))
+    return {"ok": True, "message": "分支 Review 已启动（后台执行）"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", "8900")))
