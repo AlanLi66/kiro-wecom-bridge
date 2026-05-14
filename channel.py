@@ -124,6 +124,36 @@ class Channel:
                 await self.ws.send_stream(req_id, stream_id, "当前没有进行中的辩论。", finish=True)
             return
 
+        # 快捷命令：辩论review PR链接 / 辩论review 分支名
+        import re as _re
+        debate_match = _re.match(
+            r'^(?:辩论review|辩论 review|debate review)\s+(.+)$', text, _re.IGNORECASE)
+        if debate_match:
+            target = debate_match.group(1).strip()
+            stream_id = uuid.uuid4().hex[:16]
+            session = self._get_debate(chatid, self._get_chat_config(chatid))
+            if session.running:
+                await self.ws.send_stream(req_id, stream_id, "⚠️ 辩论正在进行中，请先发「停止辩论」结束当前辩论。", finish=True)
+                return
+            # 判断是 PR 链接还是分支名
+            pr_match = _re.match(r'https://github\.com/([^/]+)/([^/]+)/pull/(\d+)', target)
+            if pr_match:
+                await self.ws.send_stream(req_id, stream_id, "🎯 正在获取 PR diff，准备启动辩论式 Review...", finish=True)
+                asyncio.create_task(self._trigger_debate_pr(chatid, pr_match.group(1), pr_match.group(2), int(pr_match.group(3))))
+            else:
+                # 尝试解析为 repo:branch 或 repo branch 格式
+                branch_match = _re.match(r'^([^\s:]+)[:\s]+([^\s]+)$', target)
+                if branch_match:
+                    repo, branch = branch_match.group(1), branch_match.group(2)
+                    await self.ws.send_stream(req_id, stream_id, f"🎯 正在获取 {repo} 分支 {branch} 的 diff...", finish=True)
+                    asyncio.create_task(self._trigger_debate_branch(chatid, repo, branch))
+                else:
+                    await self.ws.send_stream(req_id, stream_id,
+                        "请提供 PR 链接或 `仓库名:分支名` 格式，例如：\n"
+                        "• 辩论review https://github.com/yamibuy/xxx/pull/123\n"
+                        "• 辩论review ec-so-service:feature/xxx", finish=True)
+            return
+
         # 辩论进行中时，用户消息作为插话
         if chatid in self._debates and self._debates[chatid].running:
             stream_id = uuid.uuid4().hex[:16]
@@ -355,6 +385,53 @@ class Channel:
         if chatid in self._debates:
             return await self._debates[chatid].stop_debate()
         return "当前没有进行中的辩论"
+
+    async def _trigger_debate_pr(self, chatid: str, owner: str, repo: str, number: int):
+        """从 PR 获取 diff 并启动辩论"""
+        import subprocess
+        chat_type = 1 if chatid.startswith("dm_") else 2
+        try:
+            # 获取 diff
+            result = subprocess.run(
+                ["/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3",
+                 "/mnt/i/workspace/kiro-wecom-bridge/github_cli.py",
+                 "get_pr_diff", json.dumps({"owner": owner, "repo": repo, "number": number})],
+                capture_output=True, text=True, timeout=30)
+            diff_text = result.stdout.strip()
+            if not diff_text:
+                await self.ws.send_msg(chatid, chat_type, "❌ 获取 PR diff 失败，请检查链接是否正确。")
+                return
+            # 获取 PR 信息
+            context = ""
+            result2 = subprocess.run(
+                ["/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3",
+                 "/mnt/i/workspace/kiro-wecom-bridge/github_cli.py",
+                 "get_pr", json.dumps({"owner": owner, "repo": repo, "number": number})],
+                capture_output=True, text=True, timeout=15)
+            if result2.stdout.strip():
+                context = result2.stdout.strip()
+            # 启动辩论
+            await self.start_debate_review(chatid, diff_text, context)
+        except Exception as e:
+            await self.ws.send_msg(chatid, chat_type, f"❌ 启动辩论失败: {e}")
+
+    async def _trigger_debate_branch(self, chatid: str, repo: str, branch: str):
+        """从本地分支获取 diff 并启动辩论"""
+        import subprocess
+        chat_type = 1 if chatid.startswith("dm_") else 2
+        repo_path = f"/mnt/i/workspace/{repo}"
+        try:
+            result = subprocess.run(
+                ["git", "diff", f"master...{branch}"],
+                capture_output=True, text=True, timeout=30, cwd=repo_path)
+            diff_text = result.stdout.strip()
+            if not diff_text:
+                await self.ws.send_msg(chatid, chat_type, f"❌ 未获取到 diff，请确认仓库 {repo} 和分支 {branch} 是否正确。")
+                return
+            context = f"仓库: {repo}\n分支: {branch} vs master"
+            await self.start_debate_review(chatid, diff_text, context)
+        except Exception as e:
+            await self.ws.send_msg(chatid, chat_type, f"❌ 启动辩论失败: {e}")
 
     async def _on_event(self, req_id: str, body: dict):
         event_type = body.get("event", {}).get("eventtype", "")
