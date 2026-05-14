@@ -165,6 +165,7 @@ async def run_branch_review(chatid: str, pool, ws):
 
     results = []
     reviewed = 0
+    prompt_count = 0  # agent prompt 发送计数
 
     for i, item in enumerate(all_branches, 1):
         project = item["project"]
@@ -194,6 +195,7 @@ async def run_branch_review(chatid: str, pool, ws):
         try:
             reply = await proc.send(prompt, timeout=120)
             reviewed += 1
+            prompt_count += 1
 
             # 判断结果
             has_issues = any(kw in reply for kw in ["🚨", "⚠️", "严重", "问题"])
@@ -237,6 +239,7 @@ async def run_branch_review(chatid: str, pool, ws):
         f"- 耗时: {duration}s\n"
         f"- 已审查: {reviewed}/{len(all_branches)} 分支\n"
         f"- 有问题: {issues_count} | 无问题: {clean_count} | 跳过: {skipped_count}\n"
+        f"- Agent prompt 次数: {prompt_count}\n"
     )
 
     if issues_count > 0:
@@ -247,7 +250,7 @@ async def run_branch_review(chatid: str, pool, ws):
 
     await ws.send_msg(chatid, chat_type, summary)
 
-    log.info("Branch review 完成 chatid=%s branches=%d reviewed=%d issues=%d duration=%ds",
-             chatid, len(all_branches), reviewed, issues_count, duration)
+    log.info("Branch review 完成 chatid=%s branches=%d reviewed=%d issues=%d prompts=%d duration=%ds",
+             chatid, len(all_branches), reviewed, issues_count, prompt_count, duration)
 
     return results
