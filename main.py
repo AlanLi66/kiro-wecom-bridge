@@ -393,7 +393,15 @@ async def debate_start(req: DebateStartRequest):
     if not diff_text and req.branch and req.repo:
         # 从本地分支获取 diff
         import subprocess
-        repo_path = f"/mnt/i/workspace/{req.repo}"
+        frontend_repos = (
+            "ec-website-nb", "ec-website-next", "ec-website-customer-nb",
+            "ec-website-customer-next", "ec-website-trade-nb", "ec-mobilesite-nb",
+            "ec-mobilesite-ssr", "ec-mobilesite-rma", "mobile_flutter",
+        )
+        if req.repo in frontend_repos:
+            repo_path = f"/mnt/c/Alan/workspace/{req.repo}"
+        else:
+            repo_path = f"/mnt/i/workspace/{req.repo}"
         try:
             result = subprocess.run(
                 ["git", "diff", f"master...{req.branch}"],

@@ -419,7 +419,16 @@ class Channel:
         """从本地分支获取 diff 并启动辩论"""
         import subprocess
         chat_type = 1 if chatid.startswith("dm_") else 2
-        repo_path = f"/mnt/i/workspace/{repo}"
+        # 前端项目在 /mnt/c/Alan/workspace/，后端项目在 /mnt/i/workspace/
+        frontend_repos = (
+            "ec-website-nb", "ec-website-next", "ec-website-customer-nb",
+            "ec-website-customer-next", "ec-website-trade-nb", "ec-mobilesite-nb",
+            "ec-mobilesite-ssr", "ec-mobilesite-rma", "mobile_flutter",
+        )
+        if repo in frontend_repos:
+            repo_path = f"/mnt/c/Alan/workspace/{repo}"
+        else:
+            repo_path = f"/mnt/i/workspace/{repo}"
         try:
             result = subprocess.run(
                 ["git", "diff", f"master...{branch}"],
