@@ -475,10 +475,6 @@ class DebateSession:
             if any(phrase in reply for phrase in idle_phrases):
                 asyncio.ensure_future(self._push_msg("\U0001f4a1 双方表示辩论结束，进入汇总。"))
                 return True
-            # 回复过短（< 50字）= 无实质内容
-            if len(reply.strip()) < 50:
-                asyncio.ensure_future(self._push_msg("\U0001f4a1 发言内容过短，辩论自然收敛。"))
-                return True
 
         # 未达到最小轮次，不结束
         if round_num < min_rounds:
