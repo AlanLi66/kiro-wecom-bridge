@@ -23,7 +23,7 @@ WORK_DIR = os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot")
 SESSIONS_DIR = os.path.join(WORK_DIR, "wecom-sessions")
 
 # 默认最大辩论轮次（每个 agent 发言一次算一轮）
-MAX_ROUNDS = 4
+MAX_ROUNDS = 100
 
 # Agent-A: 严格派，关注安全、规范、潜在 bug
 AGENT_A_SYSTEM = """你是 **严格审查员（Strict Reviewer）**，代号 🔴A。
