@@ -98,8 +98,31 @@ class Channel:
         if not text:
             return
         if text.startswith("@"):
-            parts = text.split(None, 1)
-            text = parts[1] if len(parts) > 1 else text
+            # 去掉 @机器人名 前缀
+            # 企微格式: "@BotName  实际内容"（bot名后通常有双空格）
+            import re as _re_at
+            # 策略1：双空格分隔（企微标准格式）
+            double_space = text.find("  ", 1)
+            if double_space > 0:
+                text = text[double_space:].strip()
+            else:
+                # 策略2：找第一个中文字符
+                first_cjk = -1
+                for i, ch in enumerate(text):
+                    if '\u4e00' <= ch <= '\u9fff':
+                        first_cjk = i
+                        break
+                if first_cjk > 0:
+                    text = text[first_cjk:]
+                else:
+                    # 策略3：匹配已知英文命令关键词
+                    cmd_match = _re_at.search(r'(debate review|help|stop debate)', text, _re_at.IGNORECASE)
+                    if cmd_match:
+                        text = text[cmd_match.start():]
+                    else:
+                        # 最终 fallback
+                        parts = text.split(None, 1)
+                        text = parts[1] if len(parts) > 1 else text
 
         hit = check_injection(text)
         if hit:
