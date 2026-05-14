@@ -440,26 +440,6 @@ async def debate_stop(req: DebateStopRequest):
         return {"ok": False, "error": str(e)}
 
 
-# ---- Agent 驱动冒烟测试 API ----
-
-class AgentSmokeRequest(BaseModel):
-    chatid: str = "dm_Alan.Li"
-    env: str = "uat"
-    bot_index: int = 0
-
-
-@app.post("/smoke/agent")
-async def agent_smoke_start(req: AgentSmokeRequest):
-    """启动 Agent 驱动的智能冒烟测试"""
-    if req.bot_index >= len(cm.channels):
-        return {"ok": False, "error": f"bot_index {req.bot_index} 超出范围"}
-    ch = cm.channels[req.bot_index]
-    from agents.smoke_runner import run_agent_smoke
-    # 后台执行，不阻塞 API 响应
-    asyncio.create_task(run_agent_smoke(req.chatid, req.env, ch.pool, ch.ws))
-    return {"ok": True, "message": f"智能冒烟测试已启动 (env={req.env})"}
-
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", "8900")))
