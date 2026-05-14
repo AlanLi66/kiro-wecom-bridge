@@ -147,34 +147,56 @@ class Channel:
                 await self.ws.send_stream(req_id, stream_id, "当前没有进行中的辩论。", finish=True)
             return
 
-        # 快捷命令：辩论review PR链接 / 辩论review 分支名
+        # 快捷命令：辩论系列
+        # 支持格式：
+        #   辩论review PR链接/仓库:分支
+        #   辩论方案 主题内容
+        #   辩论需求 需求描述
+        #   辩论安全 代码/系统描述
+        #   辩论 任意话题
         import re as _re
         debate_match = _re.match(
-            r'^(?:辩论review|辩论 review|debate review)\s+(.+)$', text, _re.IGNORECASE)
+            r'^(?:辩论|debate)\s*(?:(review|方案|需求|安全)\s+)?(.+)$', text, _re.IGNORECASE | _re.DOTALL)
         if debate_match:
-            target = debate_match.group(1).strip()
+            scene = (debate_match.group(1) or "").strip().lower()
+            target = debate_match.group(2).strip()
             stream_id = uuid.uuid4().hex[:16]
             session = self._get_debate(chatid, self._get_chat_config(chatid))
             if session.running:
                 await self.ws.send_stream(req_id, stream_id, "⚠️ 辩论正在进行中，请先发「停止辩论」结束当前辩论。", finish=True)
                 return
-            # 判断是 PR 链接还是分支名
-            pr_match = _re.match(r'https://github\.com/([^/]+)/([^/]+)/pull/(\d+)', target)
-            if pr_match:
-                await self.ws.send_stream(req_id, stream_id, "🎯 正在获取 PR diff，准备启动辩论式 Review...", finish=True)
-                asyncio.create_task(self._trigger_debate_pr(chatid, pr_match.group(1), pr_match.group(2), int(pr_match.group(3))))
-            else:
-                # 尝试解析为 repo:branch 或 repo branch 格式
-                branch_match = _re.match(r'^([^\s:]+)[:\s]+([^\s]+)$', target)
-                if branch_match:
-                    repo, branch = branch_match.group(1), branch_match.group(2)
-                    await self.ws.send_stream(req_id, stream_id, f"🎯 正在获取 {repo} 分支 {branch} 的 diff...", finish=True)
-                    asyncio.create_task(self._trigger_debate_branch(chatid, repo, branch))
+
+            # 根据场景关键词选择预设
+            if scene == "review":
+                # Code Review: 支持 PR 链接或分支名
+                pr_match = _re.match(r'https://github\.com/([^/]+)/([^/]+)/pull/(\d+)', target)
+                if pr_match:
+                    await self.ws.send_stream(req_id, stream_id, "🎯 正在获取 PR diff，准备启动辩论式 Review...", finish=True)
+                    asyncio.create_task(self._trigger_debate_pr(chatid, pr_match.group(1), pr_match.group(2), int(pr_match.group(3))))
                 else:
-                    await self.ws.send_stream(req_id, stream_id,
-                        "请提供 PR 链接或 `仓库名:分支名` 格式，例如：\n"
-                        "• 辩论review https://github.com/yamibuy/xxx/pull/123\n"
-                        "• 辩论review ec-so-service:feature/xxx", finish=True)
+                    branch_match = _re.match(r'^([^\s:]+)[:\s]+([^\s]+)$', target)
+                    if branch_match:
+                        repo, branch = branch_match.group(1), branch_match.group(2)
+                        await self.ws.send_stream(req_id, stream_id, f"🎯 正在获取 {repo} 分支 {branch} 的 diff...", finish=True)
+                        asyncio.create_task(self._trigger_debate_branch(chatid, repo, branch))
+                    else:
+                        await self.ws.send_stream(req_id, stream_id,
+                            "请提供 PR 链接或 `仓库名:分支名` 格式，例如：\n"
+                            "• 辩论review https://github.com/yamibuy/xxx/pull/123\n"
+                            "• 辩论review ec-so-service:feature/xxx", finish=True)
+            elif scene == "方案":
+                await self.ws.send_stream(req_id, stream_id, "🚀 技术方案辩论启动中...", finish=True)
+                asyncio.create_task(self._trigger_debate_topic(chatid, target, "tech-decision"))
+            elif scene == "需求":
+                await self.ws.send_stream(req_id, stream_id, "📋 需求评审辩论启动中...", finish=True)
+                asyncio.create_task(self._trigger_debate_topic(chatid, target, "requirement"))
+            elif scene == "安全":
+                await self.ws.send_stream(req_id, stream_id, "🗡️ 安全攻防辩论启动中...", finish=True)
+                asyncio.create_task(self._trigger_debate_topic(chatid, target, "security"))
+            else:
+                # 自由辩论（没有场景关键词，或未识别的场景）
+                await self.ws.send_stream(req_id, stream_id, "🎯 自由辩论启动中...", finish=True)
+                asyncio.create_task(self._trigger_debate_topic(chatid, target, "free"))
             return
 
         # 辩论进行中时，用户消息作为插话
@@ -400,7 +422,7 @@ class Channel:
         session = self._get_debate(chatid, chat_cfg)
         if session.running:
             return "辩论正在进行中，请等待结束或发送「停止辩论」"
-        await session.start_debate(diff_text, context)
+        await session.start_debate(diff_text, preset="code-review", context=context)
         return "辩论式 Code Review 已启动"
 
     async def stop_debate_review(self, chatid: str) -> str:
@@ -462,6 +484,16 @@ class Channel:
                 return
             context = f"仓库: {repo}\n分支: {branch} vs master"
             await self.start_debate_review(chatid, diff_text, context)
+        except Exception as e:
+            await self.ws.send_msg(chatid, chat_type, f"❌ 启动辩论失败: {e}")
+
+    async def _trigger_debate_topic(self, chatid: str, topic: str, preset: str):
+        """启动通用话题辩论"""
+        chat_type = 1 if chatid.startswith("dm_") else 2
+        chat_cfg = self._get_chat_config(chatid)
+        session = self._get_debate(chatid, chat_cfg)
+        try:
+            await session.start_debate(topic, preset=preset)
         except Exception as e:
             await self.ws.send_msg(chatid, chat_type, f"❌ 启动辩论失败: {e}")
 

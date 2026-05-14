@@ -340,13 +340,14 @@ async def teams_send_mail(req: SendMailRequest):
 
 class DebateStartRequest(BaseModel):
     chatid: str = "dm_Alan.Li"
-    diff_text: str = ""          # 直接传 diff 文本
-    pr_url: str = ""             # 或传 PR 链接，自动获取 diff
-    branch: str = ""             # 或传分支名，自动 git diff
+    topic: str = ""              # 辩论主题（通用，任意话题）
+    diff_text: str = ""          # Code Review 专用：直接传 diff 文本
+    pr_url: str = ""             # Code Review 专用：PR 链接
+    branch: str = ""             # Code Review 专用：分支名
     repo: str = ""               # 配合 branch 使用的仓库名
-    context: str = ""            # PR 标题/描述等额外上下文
+    context: str = ""            # 额外上下文
+    preset: str = "free"         # 预设场景: code-review/tech-decision/requirement/security/free
     bot_index: int = 0
-    max_rounds: int = 4          # 最大辩论轮次
 
 
 class DebateStopRequest(BaseModel):
@@ -356,68 +357,72 @@ class DebateStopRequest(BaseModel):
 
 @app.post("/debate/start")
 async def debate_start(req: DebateStartRequest):
-    """启动辩论式 Code Review"""
+    """启动辩论（支持多种场景）"""
     if req.bot_index >= len(cm.channels):
         return {"ok": False, "error": f"bot_index {req.bot_index} 超出范围"}
     ch = cm.channels[req.bot_index]
+    chat_cfg = ch._get_chat_config(req.chatid)
+    from agents.debate.session import DebateSession
+    session = ch._get_debate(req.chatid, chat_cfg)
+    if session.running:
+        return {"ok": False, "error": "辩论正在进行中，请先停止当前辩论"}
 
-    # 获取 diff 文本
-    diff_text = req.diff_text
+    # 确定辩论内容
+    topic = req.topic
     context = req.context
+    preset = req.preset
 
-    if not diff_text and req.pr_url:
-        # 从 PR URL 获取 diff
-        import re, subprocess
-        m = re.match(r'https://github\.com/([^/]+)/([^/]+)/pull/(\d+)', req.pr_url)
-        if not m:
-            return {"ok": False, "error": "无法解析 PR URL"}
-        owner, repo, number = m.group(1), m.group(2), m.group(3)
-        try:
-            result = subprocess.run(
-                ["/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3",
-                 "/mnt/i/workspace/kiro-wecom-bridge/github_cli.py",
-                 "get_pr_diff", f'{{"owner":"{owner}","repo":"{repo}","number":{number}}}'],
-                capture_output=True, text=True, timeout=30)
-            diff_text = result.stdout.strip()
-            # 获取 PR 信息作为 context
-            result2 = subprocess.run(
-                ["/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3",
-                 "/mnt/i/workspace/kiro-wecom-bridge/github_cli.py",
-                 "get_pr", f'{{"owner":"{owner}","repo":"{repo}","number":{number}}}'],
-                capture_output=True, text=True, timeout=15)
-            if result2.stdout.strip():
-                context = result2.stdout.strip()
-        except Exception as e:
-            return {"ok": False, "error": f"获取 PR diff 失败: {e}"}
+    # Code Review 场景：获取 diff 作为 topic
+    if not topic and (req.diff_text or req.pr_url or req.branch):
+        preset = "code-review"
+        topic = req.diff_text
 
-    if not diff_text and req.branch and req.repo:
-        # 从本地分支获取 diff
-        import subprocess
-        frontend_repos = (
-            "ec-website-nb", "ec-website-next", "ec-website-customer-nb",
-            "ec-website-customer-next", "ec-website-trade-nb", "ec-mobilesite-nb",
-            "ec-mobilesite-ssr", "ec-mobilesite-rma", "mobile_flutter",
-        )
-        if req.repo in frontend_repos:
-            repo_path = f"/mnt/c/Alan/workspace/{req.repo}"
-        else:
-            repo_path = f"/mnt/i/workspace/{req.repo}"
-        try:
-            result = subprocess.run(
-                ["git", "diff", f"master...{req.branch}"],
-                capture_output=True, text=True, timeout=30, cwd=repo_path)
-            diff_text = result.stdout.strip()
-            context = f"仓库: {req.repo}\n分支: {req.branch} vs master"
-        except Exception as e:
-            return {"ok": False, "error": f"获取分支 diff 失败: {e}"}
+        if not topic and req.pr_url:
+            import re, subprocess
+            m = re.match(r'https://github\.com/([^/]+)/([^/]+)/pull/(\d+)', req.pr_url)
+            if not m:
+                return {"ok": False, "error": "无法解析 PR URL"}
+            owner, repo, number = m.group(1), m.group(2), m.group(3)
+            try:
+                result = subprocess.run(
+                    ["/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3",
+                     "/mnt/i/workspace/kiro-wecom-bridge/github_cli.py",
+                     "get_pr_diff", f'{{"owner":"{owner}","repo":"{repo}","number":{number}}}'],
+                    capture_output=True, text=True, timeout=30)
+                topic = result.stdout.strip()
+                result2 = subprocess.run(
+                    ["/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3",
+                     "/mnt/i/workspace/kiro-wecom-bridge/github_cli.py",
+                     "get_pr", f'{{"owner":"{owner}","repo":"{repo}","number":{number}}}'],
+                    capture_output=True, text=True, timeout=15)
+                if result2.stdout.strip():
+                    context = result2.stdout.strip()
+            except Exception as e:
+                return {"ok": False, "error": f"获取 PR diff 失败: {e}"}
 
-    if not diff_text:
-        return {"ok": False, "error": "请提供 diff_text、pr_url 或 branch+repo"}
+        if not topic and req.branch and req.repo:
+            import subprocess
+            frontend_repos = (
+                "ec-website-nb", "ec-website-next", "ec-website-customer-nb",
+                "ec-website-customer-next", "ec-website-trade-nb", "ec-mobilesite-nb",
+                "ec-mobilesite-ssr", "ec-mobilesite-rma", "mobile_flutter",
+            )
+            repo_path = f"/mnt/c/Alan/workspace/{req.repo}" if req.repo in frontend_repos else f"/mnt/i/workspace/{req.repo}"
+            try:
+                result = subprocess.run(
+                    ["git", "diff", f"master...{req.branch}"],
+                    capture_output=True, text=True, timeout=30, cwd=repo_path)
+                topic = result.stdout.strip()
+                context = f"仓库: {req.repo}\n分支: {req.branch} vs master"
+            except Exception as e:
+                return {"ok": False, "error": f"获取分支 diff 失败: {e}"}
 
-    # 启动辩论
+    if not topic:
+        return {"ok": False, "error": "请提供 topic（辩论主题）或 diff_text/pr_url/branch"}
+
     try:
-        msg = await ch.start_debate_review(req.chatid, diff_text, context)
-        return {"ok": True, "message": msg}
+        await session.start_debate(topic, preset=preset, context=context)
+        return {"ok": True, "message": f"{preset} 辩论已启动"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
