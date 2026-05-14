@@ -465,6 +465,21 @@ class DebateSession:
         convergence = p.get("convergence", "normal")
         min_rounds = p.get("min_rounds", 3)
 
+        # 全局兜底：agent 明确表示无话可说（所有场景通用，不受 min_rounds 限制）
+        if round_num > min_rounds:
+            idle_phrases = [
+                "辩论已结束", "等待用户", "等待指示",
+                "没有更多补充", "以上为最终意见", "讨论可以结束",
+                "等待新主题", "随时可以配合", "可以开启新",
+            ]
+            if any(phrase in reply for phrase in idle_phrases):
+                asyncio.ensure_future(self._push_msg("\U0001f4a1 双方表示辩论结束，进入汇总。"))
+                return True
+            # 回复过短（< 50字）= 无实质内容
+            if len(reply.strip()) < 50:
+                asyncio.ensure_future(self._push_msg("\U0001f4a1 发言内容过短，辩论自然收敛。"))
+                return True
+
         # 未达到最小轮次，不结束
         if round_num < min_rounds:
             return False
@@ -518,7 +533,7 @@ class DebateSession:
 
         elif convergence == "entropy":
             # 自由辩论: 杠精模式，检测语义熵
-            # 前10轮绝不结束
+            # 前10轮绝不结束（全局兜底的空转检测仍生效）
             if round_num <= 10:
                 return False
             # 10轮后检测信息量
@@ -529,7 +544,7 @@ class DebateSession:
                 return True
             # 即使有共识标记，信息量高就继续
             if reply.count("[共识]") >= 3 and entropy > 0.5:
-                return False  # 还有新东西可聊
+                return False
             if reply.count("[共识]") >= 5:
                 asyncio.ensure_future(self._push_msg("\U0001f4a1 大量共识达成，进入汇总。"))
                 return True
