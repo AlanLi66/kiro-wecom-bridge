@@ -181,8 +181,34 @@ async def run_agent_smoke(chatid: str, env: str, pool, ws):
     )
     await proc.send(init_prompt, timeout=60)
 
+    # 登录态检测：先访问一个需要登录的页面，判断 cookie 是否有效
+    login_check_prompt = (
+        f"请打开 {env_config['customer']}/zh/orders 检测登录态：\n"
+        f"- 如果页面正常显示订单列表或空订单状态，回复：LOGIN_OK\n"
+        f"- 如果跳转到登录页（URL 包含 login），回复：LOGIN_EXPIRED\n"
+        f"只回复 LOGIN_OK 或 LOGIN_EXPIRED，不要多余内容。"
+    )
+    login_reply = await proc.send(login_check_prompt, timeout=60)
+    has_login = "LOGIN_OK" in login_reply
+
+    if not has_login:
+        await ws.send_msg(chatid, chat_type,
+            "⚠️ 登录态已过期，跳过需要登录的场景（购物车、个人中心），只测试公开页面。")
+
     # 逐个场景执行
     for i, scenario in enumerate(SCENARIOS, 1):
+        # 跳过需要登录的场景
+        if not has_login and scenario["id"] in ("cart", "account"):
+            results.append({
+                "id": scenario["id"],
+                "name": scenario["name"],
+                "status": "skipped",
+                "detail": "登录态过期，已跳过",
+            })
+            await ws.send_msg(chatid, chat_type,
+                f"⏭️ [{i}/{len(SCENARIOS)}] **{scenario['name']}** — 跳过（需要登录）")
+            continue
+
         scenario_prompt = scenario["prompt"].format(**env_config)
         full_prompt = f"[测试场景 {i}/{len(SCENARIOS)}] {scenario['name']}\n\n{scenario_prompt}"
 
