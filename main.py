@@ -336,6 +336,97 @@ async def teams_send_mail(req: SendMailRequest):
     return {"ok": True}
 
 
+# ---- 辩论式 Code Review API ----
+
+class DebateStartRequest(BaseModel):
+    chatid: str = "dm_Alan.Li"
+    diff_text: str = ""          # 直接传 diff 文本
+    pr_url: str = ""             # 或传 PR 链接，自动获取 diff
+    branch: str = ""             # 或传分支名，自动 git diff
+    repo: str = ""               # 配合 branch 使用的仓库名
+    context: str = ""            # PR 标题/描述等额外上下文
+    bot_index: int = 0
+    max_rounds: int = 4          # 最大辩论轮次
+
+
+class DebateStopRequest(BaseModel):
+    chatid: str = "dm_Alan.Li"
+    bot_index: int = 0
+
+
+@app.post("/debate/start")
+async def debate_start(req: DebateStartRequest):
+    """启动辩论式 Code Review"""
+    if req.bot_index >= len(cm.channels):
+        return {"ok": False, "error": f"bot_index {req.bot_index} 超出范围"}
+    ch = cm.channels[req.bot_index]
+
+    # 获取 diff 文本
+    diff_text = req.diff_text
+    context = req.context
+
+    if not diff_text and req.pr_url:
+        # 从 PR URL 获取 diff
+        import re, subprocess
+        m = re.match(r'https://github\.com/([^/]+)/([^/]+)/pull/(\d+)', req.pr_url)
+        if not m:
+            return {"ok": False, "error": "无法解析 PR URL"}
+        owner, repo, number = m.group(1), m.group(2), m.group(3)
+        try:
+            result = subprocess.run(
+                ["/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3",
+                 "/mnt/i/workspace/kiro-wecom-bridge/github_cli.py",
+                 "get_pr_diff", f'{{"owner":"{owner}","repo":"{repo}","number":{number}}}'],
+                capture_output=True, text=True, timeout=30)
+            diff_text = result.stdout.strip()
+            # 获取 PR 信息作为 context
+            result2 = subprocess.run(
+                ["/mnt/i/workspace/kiro-wecom-bridge/.venv/bin/python3",
+                 "/mnt/i/workspace/kiro-wecom-bridge/github_cli.py",
+                 "get_pr", f'{{"owner":"{owner}","repo":"{repo}","number":{number}}}'],
+                capture_output=True, text=True, timeout=15)
+            if result2.stdout.strip():
+                context = result2.stdout.strip()
+        except Exception as e:
+            return {"ok": False, "error": f"获取 PR diff 失败: {e}"}
+
+    if not diff_text and req.branch and req.repo:
+        # 从本地分支获取 diff
+        import subprocess
+        repo_path = f"/mnt/i/workspace/{req.repo}"
+        try:
+            result = subprocess.run(
+                ["git", "diff", f"master...{req.branch}"],
+                capture_output=True, text=True, timeout=30, cwd=repo_path)
+            diff_text = result.stdout.strip()
+            context = f"仓库: {req.repo}\n分支: {req.branch} vs master"
+        except Exception as e:
+            return {"ok": False, "error": f"获取分支 diff 失败: {e}"}
+
+    if not diff_text:
+        return {"ok": False, "error": "请提供 diff_text、pr_url 或 branch+repo"}
+
+    # 启动辩论
+    try:
+        msg = await ch.start_debate_review(req.chatid, diff_text, context)
+        return {"ok": True, "message": msg}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.post("/debate/stop")
+async def debate_stop(req: DebateStopRequest):
+    """停止辩论并生成汇总"""
+    if req.bot_index >= len(cm.channels):
+        return {"ok": False, "error": f"bot_index {req.bot_index} 超出范围"}
+    ch = cm.channels[req.bot_index]
+    try:
+        summary = await ch.stop_debate_review(req.chatid)
+        return {"ok": True, "summary": summary}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host=os.getenv("HOST", "0.0.0.0"), port=int(os.getenv("PORT", "8900")))

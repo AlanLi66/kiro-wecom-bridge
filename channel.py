@@ -11,6 +11,7 @@ from agents.delegate.session import DelegateSession
 from agents.groupchat.session import GroupChatSession
 from agents.teams.session import TeamsSession
 from agents.sop.session import SOPSession
+from agents.debate.session import DebateSession
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class Channel:
         self._groupchats: dict[str, GroupChatSession] = {}
         self._teams: dict[str, TeamsSession] = {}
         self._sops: dict[str, SOPSession] = {}
+        self._debates: dict[str, DebateSession] = {}
         # strip key 防止 CRLF 行尾导致 \r 混入 chatid key
         raw_chats = config.get("chats", {"default": {"agent": None, "cwd": WORK_DIR}})
         self._chats = {k.strip(): v for k, v in raw_chats.items()}
@@ -110,6 +112,24 @@ class Channel:
             if self.welcome_msg:
                 await self.ws.send_stream(req_id, uuid.uuid4().hex[:16], self.welcome_msg, finish=True)
                 return
+
+        # 快捷命令：辩论 review / 停止辩论
+        if text in ("停止辩论", "结束辩论", "stop debate"):
+            stream_id = uuid.uuid4().hex[:16]
+            session = self._get_debate(chatid, self._get_chat_config(chatid))
+            if session.running:
+                await self.ws.send_stream(req_id, stream_id, "⏳ 正在生成汇总...", finish=True)
+                asyncio.create_task(session.stop_debate())
+            else:
+                await self.ws.send_stream(req_id, stream_id, "当前没有进行中的辩论。", finish=True)
+            return
+
+        # 辩论进行中时，用户消息作为插话
+        if chatid in self._debates and self._debates[chatid].running:
+            stream_id = uuid.uuid4().hex[:16]
+            await self._debates[chatid].inject_human(text)
+            await self.ws.send_stream(req_id, stream_id, "💬 已插入辩论，审查员下一轮会看到你的意见。", finish=True)
+            return
 
         text = f"[{userid}]: {text}"
         if quote_text:
@@ -250,6 +270,17 @@ class Channel:
                     await self.ws.send_stream(req_id, stream_id, "🚀 SOP 流程启动中...", finish=True)
                     task_id = f"TASK-{int(time.time())}"
                     await session.start_and_wait(task_id, [], text)
+            elif agent_mode == "debate":
+                session = self._get_debate(chatid, chat_cfg)
+                if session.running:
+                    # 辩论进行中，用户插话
+                    await session.inject_human(text)
+                    await self.ws.send_stream(req_id, stream_id, "💬 已插入辩论，agent 下一轮会看到你的意见。", finish=True)
+                else:
+                    # 新辩论：需要通过 API 触发（带 diff），这里提示用户
+                    await self.ws.send_stream(req_id, stream_id,
+                        "请通过 `辩论review PR链接` 或 API 触发辩论式 review。\n"
+                        "如果辩论正在进行中，你的消息会作为插话传递给两位审查员。", finish=True)
             else:
                 await self.ws.send_stream(req_id, stream_id, f"未知的 agent_mode: {agent_mode}", finish=True)
         except asyncio.CancelledError:
@@ -304,6 +335,26 @@ class Channel:
         if chatid not in self._sops:
             self._sops[chatid] = SOPSession(chatid, chat_cfg, self.ws)
         return self._sops[chatid]
+
+    def _get_debate(self, chatid: str, chat_cfg: dict) -> DebateSession:
+        if chatid not in self._debates:
+            self._debates[chatid] = DebateSession(chatid, chat_cfg, self.ws)
+        return self._debates[chatid]
+
+    async def start_debate_review(self, chatid: str, diff_text: str, context: str = "") -> str:
+        """外部 API 调用入口：启动辩论式 review"""
+        chat_cfg = self._get_chat_config(chatid)
+        session = self._get_debate(chatid, chat_cfg)
+        if session.running:
+            return "辩论正在进行中，请等待结束或发送「停止辩论」"
+        await session.start_debate(diff_text, context)
+        return "辩论式 Code Review 已启动"
+
+    async def stop_debate_review(self, chatid: str) -> str:
+        """外部 API 调用入口：停止辩论并生成汇总"""
+        if chatid in self._debates:
+            return await self._debates[chatid].stop_debate()
+        return "当前没有进行中的辩论"
 
     async def _on_event(self, req_id: str, body: dict):
         event_type = body.get("event", {}).get("eventtype", "")
