@@ -121,8 +121,16 @@ app = FastAPI(title="kiro-wecom-bridge", lifespan=lifespan)
 
 class CronTriggerRequest(BaseModel):
     chatid: str
-    prompt: str
-    bot_index: int = 0  # 多机器人时指定用哪个 channel，默认第一个
+    prompt: str = ""    # 单轮模式的 prompt
+    steps: list[str] | None = None  # 固定多轮模式：按顺序发送的 prompt 列表
+    # 动态多轮模式：agent 自主决定是否继续
+    loop: bool = False          # 是否启用动态循环模式
+    max_rounds: int = 50        # 最大轮次上限
+    continue_tag: str = "[CONTINUE]"  # agent 回复中包含此标记则继续下一轮
+    done_tag: str = "[DONE]"    # agent 回复中包含此标记则结束（可选，无 continue_tag 也会结束）
+    bot_index: int = 0
+    timeout: int = 300          # 每轮执行超时秒数
+    mode: str = "full"          # agent 权限模式：full=完整权限，safe=只读（无 execute_bash）
 
 
 class SendMsgRequest(BaseModel):
@@ -148,23 +156,83 @@ async def send_msg(req: SendMsgRequest):
 
 @app.post("/cron/trigger")
 async def cron_trigger(req: CronTriggerRequest):
-    """供 crontab 调用：向指定群发送 prompt，结果推送回企微"""
+    """供 crontab 调用：向指定群发送 prompt，结果推送回企微。
+    
+    支持三种模式：
+    - 单轮模式：传 prompt，执行一次返回结果
+    - 固定多轮模式：传 steps 数组，按顺序逐轮发送
+    - 动态循环模式：传 loop=true + prompt，agent 回复含 [CONTINUE] 则继续下一轮，
+      直到 agent 回复 [DONE] 或达到 max_rounds 上限
+    """
     if req.bot_index >= len(cm.channels):
         return {"ok": False, "error": f"bot_index {req.bot_index} 超出范围"}
     ch = cm.channels[req.bot_index]
     chat_cfg = ch._get_chat_config(req.chatid)
     agent = chat_cfg.get("agent")
     cwd = chat_cfg.get("cwd", os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot"))
+
     try:
-        proc = await ch.pool.get_or_create(req.chatid, agent=agent, cwd=cwd, mode="full")
-        reply = await proc.send(f"[cron]: {req.prompt}", timeout=300)
-        # 如果 agent 返回的是超时 fallback 消息，不推送给用户
+        proc = await ch.pool.get_or_create(req.chatid, agent=agent, cwd=cwd, mode=req.mode)
+
+        # ---- 动态循环模式 ----
+        if req.loop:
+            if not req.prompt:
+                return {"ok": False, "error": "loop 模式必须提供 prompt"}
+            reply = await proc.send(f"[cron]: {req.prompt}", timeout=req.timeout)
+            rounds = 1
+            while rounds < req.max_rounds:
+                if reply.startswith("⚠️ 处理超时") or reply.startswith("❌"):
+                    log.warning("cron loop 第 %d 轮异常 chatid=%s", rounds, req.chatid)
+                    return {"ok": False, "error": f"第 {rounds} 轮异常: {reply[:200]}"}
+                # 检查是否需要继续
+                if req.done_tag in reply:
+                    # 去掉标记，保留正文
+                    reply = reply.replace(req.done_tag, "").strip()
+                    break
+                if req.continue_tag not in reply:
+                    # 没有 continue 标记也没有 done 标记，视为自然结束
+                    break
+                # 继续下一轮：去掉标记，把回复作为上下文让 agent 继续
+                log.info("cron loop chatid=%s 第 %d 轮完成，继续...", req.chatid, rounds)
+                reply = await proc.send(
+                    f"[cron-followup]: 继续执行。上一轮你的输出已在上下文中，请基于已有信息继续下一步研究。如果还需要继续搜索请在回复末尾加 {req.continue_tag}，如果已完成最终报告请在末尾加 {req.done_tag}",
+                    timeout=req.timeout
+                )
+                rounds += 1
+            log.info("cron loop chatid=%s 完成，共 %d 轮", req.chatid, rounds)
+            # 推送最终结果
+            final_reply = reply.replace(req.continue_tag, "").replace(req.done_tag, "").strip()
+            chat_type = 1 if req.chatid.startswith("dm_") else 2
+            await ch.ws.send_msg(req.chatid, chat_type, final_reply)
+            return {"ok": True, "reply_length": len(final_reply), "rounds": rounds}
+
+        # ---- 固定多轮模式 ----
+        if req.steps:
+            prev_reply = ""
+            for i, step_prompt in enumerate(req.steps):
+                actual_prompt = step_prompt.replace("{prev_reply}", prev_reply)
+                prefix = "[cron]: " if i == 0 else "[cron-followup]: "
+                reply = await proc.send(f"{prefix}{actual_prompt}", timeout=req.timeout)
+                if reply.startswith("⚠️ 处理超时") or reply.startswith("❌"):
+                    log.warning("cron steps 第 %d 轮异常 chatid=%s", i + 1, req.chatid)
+                    return {"ok": False, "error": f"第 {i+1} 轮异常: {reply[:200]}"}
+                prev_reply = reply
+                log.info("cron steps chatid=%s 第 %d/%d 轮完成", req.chatid, i + 1, len(req.steps))
+            chat_type = 1 if req.chatid.startswith("dm_") else 2
+            await ch.ws.send_msg(req.chatid, chat_type, prev_reply)
+            return {"ok": True, "reply_length": len(prev_reply), "rounds": len(req.steps)}
+
+        # ---- 单轮模式 ----
+        if not req.prompt:
+            return {"ok": False, "error": "prompt 不能为空"}
+        reply = await proc.send(f"[cron]: {req.prompt}", timeout=req.timeout)
         if reply.startswith("⚠️ 处理超时") or reply.startswith("❌"):
-            log.warning("cron 任务异常，不推送给用户 chatid=%s reply=%s", req.chatid, reply[:80])
+            log.warning("cron 任务异常 chatid=%s reply=%s", req.chatid, reply[:80])
             return {"ok": False, "error": reply}
         chat_type = 1 if req.chatid.startswith("dm_") else 2
         await ch.ws.send_msg(req.chatid, chat_type, reply)
-        return {"ok": True, "reply_length": len(reply)}
+        return {"ok": True, "reply_length": len(reply), "rounds": 1}
+
     except Exception as e:
         log.error("cron trigger 异常 chatid=%s: %s", req.chatid, e)
         return {"ok": False, "error": str(e)}
@@ -179,6 +247,7 @@ class JobCreateRequest(BaseModel):
     prompt: str         # 要执行的 prompt
     bot_index: int = 0
     description: str = ""
+    timeout: int = 300  # 执行超时秒数
 
 class JobUpdateRequest(BaseModel):
     cron: Optional[str] = None
@@ -187,10 +256,11 @@ class JobUpdateRequest(BaseModel):
     bot_index: Optional[int] = None
     enabled: Optional[bool] = None
     description: Optional[str] = None
+    timeout: Optional[int] = None
 
 @app.post("/scheduler/jobs")
 async def create_job(req: JobCreateRequest):
-    job = scheduler.create_job(req.cron, req.chatid, req.prompt, req.bot_index, req.description)
+    job = scheduler.create_job(req.cron, req.chatid, req.prompt, req.bot_index, req.description, req.timeout)
     return {"ok": True, "job": job}
 
 @app.get("/scheduler/jobs")

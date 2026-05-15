@@ -122,6 +122,7 @@ def get_scheduler_tasks() -> list[dict]:
 
     try:
         conn = sqlite3.connect(SCHEDULER_DB)
+        conn.text_factory = lambda b: b.decode("utf-8", errors="replace")
         conn.row_factory = sqlite3.Row
         rows = conn.execute("SELECT * FROM jobs ORDER BY created_at").fetchall()
         conn.close()
