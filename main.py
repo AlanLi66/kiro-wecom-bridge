@@ -14,6 +14,7 @@ from agents.teams.task_list import TaskList
 from agents.teams.mailbox import Mailbox
 import scheduler
 import zentao_poller
+import lab_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
@@ -115,6 +116,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="kiro-wecom-bridge", lifespan=lifespan)
+
+# 注册 Requirement Lab 内部 API
+lab_router.set_channel_manager(cm)
+app.include_router(lab_router.router)
 
 
 # ---- 定时任务触发接口 ----
