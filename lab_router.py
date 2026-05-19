@@ -224,7 +224,8 @@ yamibuy 是北美最大的亚洲食品电商平台，面向华人用户。
       "effort_estimate": "预估工期（如 3-5 人天）",
       "target_pages": ["涉及页面"],
       "existing_status": "已有/部分已有/全新",
-      "reference": "参考案例或竞品（如有）"
+      "reference": "参考案例或竞品（如有）",
+      "reasoning": "生成此创意的依据（如：竞品X有此功能但我们没有 / 数据显示Y指标偏低 / 基于目标Z的逻辑推导）"
     }}
   ],
   "analysis_summary": "整体分析总结，说明为什么推荐这些方向"
@@ -477,27 +478,31 @@ async def scan_features():
 ## 输出要求
 只输出 JSON，不要其他文字。直接以 { 开头。
 
+每个功能必须包含 name（功能名）和 description（功能描述，说明具体做了什么、用户如何交互、有什么业务价值）。
+
 {
   "pages": [
     {
       "page": "首页(Home)",
-      "features": ["Banner轮播", "分类导航", "推荐商品列表", "促销活动入口"],
+      "features": [
+        {"name": "Banner轮播", "description": "首屏大图轮播，展示促销活动和新品推荐，支持自动播放和手动切换，点击跳转活动页"},
+        {"name": "分类导航", "description": "顶部/侧边分类入口，按商品类目（零食、饮料、美妆等）快速跳转到对应列表页"}
+      ],
       "key_files": ["src/app/(home)/page.tsx"]
-    },
-    {
-      "page": "商品详情页(PDP)",
-      "features": ["商品图片轮播", "价格展示", "加购按钮", "评论列表", "预计送达时间"],
-      "key_files": ["src/app/product/[id]/page.tsx"]
     }
   ],
   "scan_summary": "共扫描6个页面，发现XX个功能点"
 }
 
-每个功能用简短的中文描述（5-15字）。只列出用户可见的功能，不列内部技术实现。
+description 要求：
+- 20-60字，说清楚功能的具体表现和用户价值
+- 基于代码中看到的实际实现来描述，不要编造
+- 如果从代码中能看出交互细节（如支持筛选、排序、分页等），要写出来
+
 只输出 JSON。"""
 
     try:
-        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="safe")
+        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
         reply = await proc.send(prompt, timeout=180)
 
         if not reply or not reply.strip():
@@ -547,17 +552,29 @@ async def scan_competitors():
 ## 输出要求
 只输出 JSON，不要其他文字。直接以 { 开头。
 
+每个功能必须包含 name（功能名）和 description（详细描述该功能的具体实现方式、用户体验、业务策略）。
+
 {
   "competitors": [
     {
       "name": "temu",
-      "features": ["功能1", "功能2", "功能3", "功能4", "功能5"],
-      "recent_changes": ["最近新增的功能或变化"],
+      "features": [
+        {"name": "限时闪购倒计时", "description": "商品页和列表页展示实时倒计时，营造紧迫感驱动用户快速下单，结合库存紧张提示增强转化"},
+        {"name": "社交裂变拼团", "description": "用户发起拼团邀请好友参与，达到人数后享受更低价格，通过社交分享获取新用户"}
+      ],
+      "recent_changes": [
+        {"name": "本地卖家计划", "description": "2024年推出，允许本地商家入驻，缩短配送时间，从纯跨境模式向本地化转型"}
+      ],
       "highlights": "核心差异化优势一句话"
     }
   ],
   "scan_summary": "扫描总结"
 }
+
+description 要求：
+- 30-80字，说清楚功能的具体实现方式、用户体验和业务价值
+- 基于搜索到的真实信息描述，不要编造
+- recent_changes 也要有详细描述，说明变化的背景和影响
 
 只输出 JSON。"""
 
