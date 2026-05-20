@@ -10,6 +10,7 @@ import logging
 import os
 from typing import List, Optional
 
+import aiohttp
 from fastapi import APIRouter
 from pydantic import BaseModel
 
@@ -21,7 +22,25 @@ router = APIRouter(prefix="/lab", tags=["requirement-lab"])
 
 # 分析用的 chatid（使用独立会话，不干扰正常对话）
 LAB_CHATID = "_requirement_lab"
+LAB_COMPETITOR_CHATID = "_requirement_lab_competitor"
 LAB_CWD = os.getenv("KIRO_WORK_DIR", "/mnt/i/workspace/alan_bot")
+
+# 企微通知配置
+NOTIFY_CHATID = "dm_Alan.Li"
+BRIDGE_SEND_URL = "http://localhost:8900/send"
+
+
+async def _notify_wecom(content: str):
+    """推送消息到企微"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                BRIDGE_SEND_URL,
+                json={"chatid": NOTIFY_CHATID, "content": content, "chat_type": 1},
+                timeout=aiohttp.ClientTimeout(total=10),
+            )
+    except Exception as e:
+        log.warning("企微通知发送失败: %s", e)
 
 
 class AnalyzeCodeRequest(BaseModel):
@@ -75,6 +94,15 @@ def set_channel_manager(cm: ChannelManager):
     """由 main.py 调用，注入 ChannelManager 引用"""
     global _cm
     _cm = cm
+
+
+@router.post("/reset_lock")
+async def reset_lock():
+    """手动释放并发锁（调试用）"""
+    global _simulate_lock
+    was_locked = _simulate_lock
+    _simulate_lock = False
+    return {"ok": True, "was_locked": was_locked}
 
 
 def _extract_json(text: str) -> dict:
@@ -199,17 +227,23 @@ yamibuy 是北美最大的亚洲食品电商平台，面向华人用户。
 {pages_str}
 {context_str}
 
-## 重要约束
-- 不要生成已有功能的重复需求（参考上方已有功能清单）
-- 只生成真正的新功能或对已有功能的显著增强
-- 如果不确定是否已有，标注 existing_status 为"需确认"
+## 去重规则（严格执行，最高优先级）
+生成每个创意前，必须逐条检查已有功能清单中的 covers_scenarios：
+1. 如果已有功能的 covers_scenarios 中包含你要生成的创意所解决的场景，则视为已有，禁止生成
+2. 语义相近即视为重复：
+   - "用户评价摘要/评价展示/评论统计/口碑" ≈ 已有的"评论区"功能
+   - "最近购买记录/购买历史/浏览记录" ≈ 已有的"浏览足迹"功能
+   - "社交证明/购买信心/从众心理" → 如果已有评论区+浏览足迹，则该场景已被覆盖
+3. 对已有功能换个展示位置、换个文案、换个样式，不算新需求
+4. 只有功能逻辑和用户价值完全不同于所有已有功能的，才算"全新"
+5. 如果实在不确定，标注 existing_status 为"需确认"并说明与哪个已有功能可能重叠
 
 ## 任务
 请生成 5-8 个具体的需求创意。每个创意要：
 - 具体可执行（不是泛泛的方向）
 - 有明确的用户价值
 - 考虑电商场景的实际约束
-- 参考已有功能清单判断 existing_status
+- 与已有功能无语义重叠（严格遵守去重规则）
 
 ## 输出要求
 只输出 JSON，不要任何其他文字。直接以 {{ 开头。
@@ -449,9 +483,267 @@ level 只能是: high, medium, low
         _simulate_lock = False
 
 
+
+# ============================================================
+# 功能扫描（两阶段：路由发现 → 逐页面深入）
+# ============================================================
+
+# 逐项目扫描配置
+SCAN_PROJECTS = [
+    {
+        "project": "ec-website-next",
+        "platform": "PC",
+        "tech": "Next.js/React",
+        "base_path": "/mnt/c/Alan/workspace/ec-website-next",
+        "route_discovery": "find /mnt/c/Alan/workspace/ec-website-next/src/app -maxdepth 2 -name 'page.tsx' -o -name 'page.ts' | grep -v node_modules | sort",
+        "file_types": "*.tsx,*.ts",
+        "exclude_dirs": "node_modules,.next,.git,dist",
+    },
+    {
+        "project": "ec-website-nb",
+        "platform": "PC",
+        "tech": "PHP/Laravel",
+        "base_path": "/mnt/c/Alan/workspace/ec-website-nb",
+        "route_discovery": "find /mnt/c/Alan/workspace/ec-website-nb/resources/views -maxdepth 1 -type d | sort",
+        "file_types": "*.blade.php",
+        "exclude_dirs": "vendor,node_modules,.git",
+    },
+    {
+        "project": "ec-website-customer-next",
+        "platform": "PC",
+        "tech": "Next.js/React",
+        "base_path": "/mnt/c/Alan/workspace/ec-website-customer-next",
+        "route_discovery": "find /mnt/c/Alan/workspace/ec-website-customer-next/src/app -maxdepth 2 -name 'page.tsx' -o -name 'page.ts' | grep -v node_modules | sort",
+        "file_types": "*.tsx,*.ts",
+        "exclude_dirs": "node_modules,.next,.git,dist",
+    },
+    {
+        "project": "ec-website-customer-nb",
+        "platform": "PC",
+        "tech": "PHP/Laravel",
+        "base_path": "/mnt/c/Alan/workspace/ec-website-customer-nb",
+        "route_discovery": "find /mnt/c/Alan/workspace/ec-website-customer-nb/resources/views -maxdepth 1 -type d | sort",
+        "file_types": "*.blade.php",
+        "exclude_dirs": "vendor,node_modules,.git",
+    },
+    {
+        "project": "ec-website-trade-nb",
+        "platform": "PC",
+        "tech": "PHP/Laravel",
+        "base_path": "/mnt/c/Alan/workspace/ec-website-trade-nb",
+        "route_discovery": "find /mnt/c/Alan/workspace/ec-website-trade-nb/resources/views -maxdepth 1 -type d | sort",
+        "file_types": "*.blade.php",
+        "exclude_dirs": "vendor,node_modules,.git",
+    },
+    {
+        "project": "ec-mobilesite-nb",
+        "platform": "H5",
+        "tech": "Nuxt.js/Vue",
+        "base_path": "/mnt/c/Alan/workspace/ec-mobilesite-nb",
+        "route_discovery": "find /mnt/c/Alan/workspace/ec-mobilesite-nb/src/pages -maxdepth 1 -type d | sort",
+        "file_types": "*.vue,*.js",
+        "exclude_dirs": "node_modules,.nuxt,.git,dist",
+    },
+    {
+        "project": "ec-mobilesite-ssr",
+        "platform": "H5",
+        "tech": "Nuxt.js/Vue",
+        "base_path": "/mnt/c/Alan/workspace/ec-mobilesite-ssr",
+        "route_discovery": "find /mnt/c/Alan/workspace/ec-mobilesite-ssr/src/pages -maxdepth 1 -type d | sort",
+        "file_types": "*.vue,*.js",
+        "exclude_dirs": "node_modules,.nuxt,.git,dist,.output",
+    },
+    {
+        "project": "ec-mobilesite-rma",
+        "platform": "H5",
+        "tech": "Vue",
+        "base_path": "/mnt/c/Alan/workspace/ec-mobilesite-rma",
+        "route_discovery": "find /mnt/c/Alan/workspace/ec-mobilesite-rma/src -maxdepth 2 -name '*.vue' -path '*/views/*' | sort",
+        "file_types": "*.vue",
+        "exclude_dirs": "node_modules,.git,dist",
+    },
+    {
+        "project": "mobile_flutter",
+        "platform": "APP",
+        "tech": "Flutter/Dart",
+        "base_path": "/mnt/c/Alan/workspace/mobile_flutter",
+        "route_discovery": "grep -rn 'GoRoute\\|MaterialPageRoute\\|GetPage' /mnt/c/Alan/workspace/mobile_flutter/lib/ --include='*.dart' --exclude-dir=build --exclude-dir=.dart_tool --exclude-dir=.git -l | head -20",
+        "file_types": "*.dart",
+        "exclude_dirs": "build,.dart_tool,.git",
+    },
+]
+
+# 竞品列表（逐竞品深入扫描）
+COMPETITORS = [
+    {
+        "name": "Temu",
+        "description": "拼多多海外版，主打极致低价和社交裂变",
+        "focus": "低价策略、社交玩法、游戏化、新用户获取、物流体验",
+    },
+    {
+        "name": "Sayweee/Weee!",
+        "description": "北美亚洲生鲜食品电商，与 yamibuy 直接竞争",
+        "focus": "生鲜配送、本地仓储、社区团购、会员体系、亚洲食品品类",
+    },
+    {
+        "name": "Amazon",
+        "description": "全球最大综合电商，行业标杆",
+        "focus": "个性化推荐、Prime会员、一键下单、评论体系、物流速度、搜索体验",
+    },
+    {
+        "name": "H Mart",
+        "description": "韩国超市线上化，亚洲食品杂货",
+        "focus": "线上线下融合、本地配送、韩国食品特色、促销活动",
+    },
+    {
+        "name": "Instacart",
+        "description": "北美即时配送平台，杂货电商标杆",
+        "focus": "即时配送、替代品推荐、购物清单、个性化、广告变现",
+    },
+]
+
+
+def _build_route_discovery_prompt(project_config: dict) -> str:
+    """第一阶段：发现项目所有页面/路由"""
+    return f"""[lab-scan-routes]: 请扫描 {project_config['project']}（{project_config['tech']}，{project_config['platform']}端）的路由结构，列出所有用户可访问的页面。
+
+执行以下命令发现路由：
+```
+{project_config['route_discovery']}
+```
+
+然后根据结果，列出所有页面。对于每个页面，给出：
+- 页面名称（中文+英文）
+- 对应的代码目录路径
+
+## 输出要求
+只输出 JSON，不要其他文字。直接以 {{ 开头。
+
+{{
+  "project": "{project_config['project']}",
+  "platform": "{project_config['platform']}",
+  "pages": [
+    {{
+      "name": "首页(Home)",
+      "path": "{project_config['base_path']}/src/app/(home)/"
+    }}
+  ]
+}}
+
+注意：
+- 排除纯 API 路由（如 /api/）、layout 文件、error 页面、not-found 页面
+- 只列出有实际 UI 的用户页面
+- 如果是 Flutter 项目，从路由注册文件中提取页面列表，path 填对应的 lib/ 子目录
+- 如果是 PHP/Laravel 项目，每个 views 子目录通常对应一个页面模块
+
+只输出 JSON。"""
+
+
+def _build_page_scan_prompt(project_config: dict, page_name: str, page_path: str) -> str:
+    """第二阶段：深入扫描单个页面的功能"""
+    return f"""[lab-scan-page]: 请深入扫描 **{page_name}** 页面的代码，列出所有用户可见功能。
+
+项目：{project_config['project']}（{project_config['platform']}端，{project_config['tech']}）
+代码路径：{page_path}
+
+## 扫描方法
+1. 先 find 列出该目录下所有代码文件（排除 {project_config['exclude_dirs']}）
+2. 对关键文件 cat 查看内容，关注：组件引用、API 调用、UI 文案、条件渲染、用户交互
+3. 不要遗漏任何用户可见的功能点（包括小功能如分享、收藏、标签、弹窗等）
+
+## 输出要求
+只输出 JSON，不要其他文字。直接以 {{ 开头。
+
+{{
+  "page": "{page_name}",
+  "project": "{project_config['project']}",
+  "platform": "{project_config['platform']}",
+  "features": [
+    {{
+      "name": "功能名称",
+      "description": "30-80字，说清楚功能的具体表现、用户交互方式和业务价值",
+      "covers_scenarios": ["该功能覆盖的业务场景1", "场景2", "场景3"]
+    }}
+  ],
+  "key_files": ["关键文件路径"]
+}}
+
+description 要求：
+- 30-80字，基于代码实际实现描述，不要编造
+- 用业务语言，说清楚用户能看到什么、能做什么
+
+covers_scenarios 要求（重要，用于后续创意去重）：
+- 列出 3-6 个该功能覆盖的业务场景
+- 用产品语言：如"社交证明"、"购买信心"、"历史行为回溯"
+- 包含近义词和相关概念，越全越好
+- 例如评论区：["用户评价展示", "评分统计", "社交证明", "购买信心", "UGC内容", "口碑展示"]
+- 例如浏览足迹：["历史浏览记录", "最近看过的商品", "行为回溯", "商品回访", "浏览历史"]
+
+只输出 JSON。"""
+
+
+def _build_competitor_scan_prompt(competitor: dict) -> str:
+    """为单个竞品构建深入扫描 prompt"""
+    return f"""[lab-competitor]: 请深入搜索 **{competitor['name']}** 的产品功能和最新动态。
+
+## 竞品简介
+{competitor['description']}
+
+## 重点关注方向
+{competitor['focus']}
+
+## 搜索任务
+请从多个角度搜索该竞品的信息：
+
+1. **核心功能清单**：逐页面列出其主要功能（首页、搜索、商品详情、购物车、结算、会员中心、促销活动）
+2. **差异化功能**：与 yamibuy 相比，它有哪些我们没有的功能？
+3. **最近更新**：过去 6 个月的产品更新、新功能发布
+4. **用户体验亮点**：交互设计、个性化、社交功能等方面的亮点
+
+## 输出要求
+只输出 JSON，不要其他文字。直接以 {{ 开头。
+
+{{
+  "name": "{competitor['name']}",
+  "core_features": [
+    {{
+      "page": "页面名称",
+      "features": [
+        {{
+          "name": "功能名称",
+          "description": "50-100字详细描述：具体实现方式、用户体验、业务策略"
+        }}
+      ]
+    }}
+  ],
+  "unique_features": [
+    {{
+      "name": "差异化功能名称",
+      "description": "详细描述该功能的实现和价值",
+      "yamibuy_gap": "yamibuy 缺少此功能的影响"
+    }}
+  ],
+  "recent_changes": [
+    {{
+      "name": "更新名称",
+      "description": "更新内容和影响",
+      "date": "大致时间"
+    }}
+  ],
+  "ux_highlights": ["体验亮点1", "体验亮点2"]
+}}
+
+description 要求：
+- 50-100字，说清楚功能的具体实现方式、用户体验和业务策略
+- 基于搜索到的真实信息，不要编造
+- 如果搜索不到某方面信息，该字段留空数组，不要瞎编
+
+只输出 JSON。"""
+
+
 @router.post("/scan_features")
 async def scan_features():
-    """扫描代码，提取各页面已有功能清单"""
+    """扫描代码，提取各页面已有功能清单（两阶段：路由发现 → 逐页面深入）"""
     global _simulate_lock
 
     if not _cm or not _cm.channels:
@@ -463,59 +755,89 @@ async def scan_features():
     _simulate_lock = True
     ch = _cm.channels[0]
 
-    prompt = """[lab-scan]: 请扫描以下前端代码目录，列出每个页面已实现的用户可见功能。
-
-用 find 和 grep 搜索代码，关注组件名、路由、UI 文案、API 调用等线索。
-
-扫描目标：
-1. 首页: /mnt/c/Alan/workspace/ec-website-next/src/app/(home)/ 和 src/components/home/
-2. PDP: /mnt/c/Alan/workspace/ec-website-next/src/app/product/ 和 src/components/product/
-3. 购物车: /mnt/c/Alan/workspace/ec-website-next/src/app/cart/ 和 src/components/cart/
-4. 搜索: /mnt/c/Alan/workspace/ec-website-next/src/app/search/ 和 src/components/search/
-5. 结算: /mnt/c/Alan/workspace/ec-website-next/src/app/checkout/
-6. 个人中心: /mnt/c/Alan/workspace/ec-website-next/src/app/account/
-
-## 输出要求
-只输出 JSON，不要其他文字。直接以 { 开头。
-
-每个功能必须包含 name（功能名）和 description（功能描述，说明具体做了什么、用户如何交互、有什么业务价值）。
-
-{
-  "pages": [
-    {
-      "page": "首页(Home)",
-      "features": [
-        {"name": "Banner轮播", "description": "首屏大图轮播，展示促销活动和新品推荐，支持自动播放和手动切换，点击跳转活动页"},
-        {"name": "分类导航", "description": "顶部/侧边分类入口，按商品类目（零食、饮料、美妆等）快速跳转到对应列表页"}
-      ],
-      "key_files": ["src/app/(home)/page.tsx"]
-    }
-  ],
-  "scan_summary": "共扫描6个页面，发现XX个功能点"
-}
-
-description 要求：
-- 20-60字，说清楚功能的具体表现和用户价值
-- 基于代码中看到的实际实现来描述，不要编造
-- 如果从代码中能看出交互细节（如支持筛选、排序、分页等），要写出来
-
-只输出 JSON。"""
+    all_pages = []
+    errors = []
 
     try:
         proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
-        reply = await proc.send(prompt, timeout=180)
 
-        if not reply or not reply.strip():
-            return {"error": "Agent 无响应"}
+        for project_config in SCAN_PROJECTS:
+            project_name = project_config["project"]
+            log.info("[scan_features] 第一阶段 - 发现路由: %s", project_name)
 
-        try:
-            result = _extract_json(reply)
-            result["raw_output"] = reply
-            return result
-        except (json.JSONDecodeError, ValueError):
-            return {"error": "解析失败", "raw_output": reply}
+            # 第一阶段：发现所有页面
+            route_prompt = _build_route_discovery_prompt(project_config)
+            route_reply = await proc.send(route_prompt, timeout=60)
+
+            if not route_reply or not route_reply.strip():
+                errors.append(f"{project_name}: 路由发现无响应")
+                continue
+
+            try:
+                route_result = _extract_json(route_reply)
+                pages = route_result.get("pages", [])
+            except (json.JSONDecodeError, ValueError):
+                errors.append(f"{project_name}: 路由发现 JSON 解析失败")
+                continue
+
+            if not pages:
+                errors.append(f"{project_name}: 未发现任何页面")
+                continue
+
+            log.info("[scan_features] %s 发现 %d 个页面，开始逐页面扫描", project_name, len(pages))
+
+            # 第二阶段：逐页面深入扫描
+            for page_info in pages:
+                page_name = page_info.get("name", "未知页面")
+                page_path = page_info.get("path", "")
+
+                if not page_path:
+                    continue
+
+                log.info("[scan_features] 扫描: %s - %s", project_name, page_name)
+                page_prompt = _build_page_scan_prompt(project_config, page_name, page_path)
+                page_reply = await proc.send(page_prompt, timeout=90)
+
+                if not page_reply or not page_reply.strip():
+                    errors.append(f"{project_name}/{page_name}: 无响应")
+                    continue
+
+                try:
+                    page_result = _extract_json(page_reply)
+                    page_result["page"] = page_name
+                    page_result["project"] = project_name
+                    page_result["platform"] = project_config["platform"]
+                    all_pages.append(page_result)
+                except (json.JSONDecodeError, ValueError):
+                    errors.append(f"{project_name}/{page_name}: JSON 解析失败")
+
+                await asyncio.sleep(0.5)
+
+            await asyncio.sleep(1)
+
+        total_features = sum(len(p.get("features", [])) for p in all_pages)
+        result = {
+            "pages": all_pages,
+            "scan_summary": f"共扫描{len(SCAN_PROJECTS)}个项目、{len(all_pages)}个页面，发现{total_features}个功能点",
+        }
+        if errors:
+            result["errors"] = errors
+
+        # 推送企微通知
+        msg = f"📊 **功能扫描完成**\n\n"
+        msg += f"✅ 扫描项目: {len(SCAN_PROJECTS)} 个\n"
+        msg += f"✅ 发现页面: {len(all_pages)} 个\n"
+        msg += f"✅ 功能点: {total_features} 个\n"
+        if errors:
+            msg += f"⚠️ 失败: {len(errors)} 个\n"
+            msg += "失败详情:\n" + "\n".join(f"  - {e}" for e in errors[:10])
+        await _notify_wecom(msg)
+
+        return result
+
     except Exception as e:
         log.error("scan_features 异常: %s", e)
+        await _notify_wecom(f"❌ **功能扫描异常**\n\n{str(e)[:200]}")
         return {"error": str(e)}
     finally:
         _simulate_lock = False
@@ -523,7 +845,7 @@ description 要求：
 
 @router.post("/scan_competitors")
 async def scan_competitors():
-    """搜索竞品最新功能和动态"""
+    """搜索竞品最新功能和动态（逐竞品深入扫描）"""
     global _simulate_lock
 
     if not _cm or not _cm.channels:
@@ -535,64 +857,67 @@ async def scan_competitors():
     _simulate_lock = True
     ch = _cm.channels[0]
 
-    prompt = """[lab-competitor]: 请搜索以下竞品电商平台的功能特点和最新动态。
-
-竞品列表：
-1. Temu - 拼多多海外版，主打低价
-2. Sayweee - 亚洲生鲜电商
-3. Amazon - 综合电商巨头
-4. Weee! - 亚洲食品杂货配送
-5. H Mart - 韩国超市线上化
-
-对每个竞品，搜索其：
-- 核心功能特点（首页/搜索/PDP/购物车/结算/会员/促销）
-- 最近的产品更新或新功能
-- 与 yamibuy 的差异化优势
-
-## 输出要求
-只输出 JSON，不要其他文字。直接以 { 开头。
-
-每个功能必须包含 name（功能名）和 description（详细描述该功能的具体实现方式、用户体验、业务策略）。
-
-{
-  "competitors": [
-    {
-      "name": "temu",
-      "features": [
-        {"name": "限时闪购倒计时", "description": "商品页和列表页展示实时倒计时，营造紧迫感驱动用户快速下单，结合库存紧张提示增强转化"},
-        {"name": "社交裂变拼团", "description": "用户发起拼团邀请好友参与，达到人数后享受更低价格，通过社交分享获取新用户"}
-      ],
-      "recent_changes": [
-        {"name": "本地卖家计划", "description": "2024年推出，允许本地商家入驻，缩短配送时间，从纯跨境模式向本地化转型"}
-      ],
-      "highlights": "核心差异化优势一句话"
-    }
-  ],
-  "scan_summary": "扫描总结"
-}
-
-description 要求：
-- 30-80字，说清楚功能的具体实现方式、用户体验和业务价值
-- 基于搜索到的真实信息描述，不要编造
-- recent_changes 也要有详细描述，说明变化的背景和影响
-
-只输出 JSON。"""
+    all_competitors = []
+    errors = []
 
     try:
-        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
-        reply = await proc.send(prompt, timeout=180)
+        proc = await ch.pool.get_or_create(LAB_COMPETITOR_CHATID, cwd=LAB_CWD, mode="full")
 
-        if not reply or not reply.strip():
-            return {"error": "Agent 无响应"}
+        for competitor in COMPETITORS:
+            comp_name = competitor["name"]
+            log.info("[scan_competitors] 开始扫描竞品: %s", comp_name)
 
-        try:
-            result = _extract_json(reply)
-            result["raw_output"] = reply
-            return result
-        except (json.JSONDecodeError, ValueError):
-            return {"error": "解析失败", "raw_output": reply}
+            prompt = _build_competitor_scan_prompt(competitor)
+            reply = await proc.send(prompt, timeout=180)
+
+            if not reply or not reply.strip():
+                errors.append(f"{comp_name}: Agent 无响应")
+                continue
+
+            try:
+                comp_result = _extract_json(reply)
+                comp_result["name"] = comp_name
+                all_competitors.append(comp_result)
+                feature_count = sum(
+                    len(page.get("features", []))
+                    for page in comp_result.get("core_features", [])
+                )
+                unique_count = len(comp_result.get("unique_features", []))
+                log.info("[scan_competitors] %s 完成: %d 核心功能, %d 差异化功能",
+                         comp_name, feature_count, unique_count)
+            except (json.JSONDecodeError, ValueError) as e:
+                errors.append(f"{comp_name}: JSON 解析失败")
+                log.warning("[scan_competitors] %s 解析失败, reply前200字: %s", comp_name, reply[:200])
+
+            await asyncio.sleep(1)
+
+        result = {
+            "competitors": all_competitors,
+            "scan_summary": f"共扫描{len(all_competitors)}个竞品",
+        }
+        if errors:
+            result["errors"] = errors
+            # 返回最后一个失败的原始回复（调试用）
+            if reply:
+                result["last_raw_reply"] = reply[:500]
+
+        # 推送企微通知
+        msg = f"📊 **竞品扫描完成**\n\n"
+        msg += f"✅ 成功: {len(all_competitors)} 个竞品\n"
+        for comp in all_competitors:
+            feature_count = sum(len(p.get("features", [])) for p in comp.get("core_features", []))
+            unique_count = len(comp.get("unique_features", []))
+            msg += f"  - {comp['name']}: {feature_count} 核心功能, {unique_count} 差异化功能\n"
+        if errors:
+            msg += f"⚠️ 失败: {len(errors)} 个\n"
+            msg += "失败详情:\n" + "\n".join(f"  - {e}" for e in errors[:10])
+        await _notify_wecom(msg)
+
+        return result
+
     except Exception as e:
         log.error("scan_competitors 异常: %s", e)
+        await _notify_wecom(f"❌ **竞品扫描异常**\n\n{str(e)[:200]}")
         return {"error": str(e)}
     finally:
         _simulate_lock = False
