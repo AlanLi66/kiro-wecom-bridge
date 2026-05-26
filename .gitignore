@@ -10,3 +10,4 @@ db_config.json
 reports/
 web_test_cookies/
 logs/
+.kiro/
