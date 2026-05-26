@@ -173,7 +173,7 @@ async def analyze_code(req: AnalyzeCodeRequest):
 }}"""
 
     try:
-        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="safe")
+        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
         reply = await proc.send(prompt, timeout=120)
 
         # 尝试解析 JSON
@@ -268,7 +268,7 @@ yamibuy 是北美最大的亚洲食品电商平台，面向华人用户。
 只输出 JSON。"""
 
     try:
-        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="safe")
+        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
         reply = await proc.send(prompt, timeout=180)
 
         if not reply or not reply.strip():
@@ -337,7 +337,7 @@ async def run_debate(req: RunDebateRequest):
 只输出 JSON。"""
 
     try:
-        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="safe")
+        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
         reply = await proc.send(prompt, timeout=120)
 
         if not reply or not reply.strip():
@@ -449,7 +449,7 @@ level 只能是: high, medium, low
 只输出 JSON。"""
 
     try:
-        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="safe")
+        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
         reply = await proc.send(prompt, timeout=300)
 
         if not reply or not reply.strip():
