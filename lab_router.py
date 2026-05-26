@@ -743,7 +743,7 @@ description 要求：
 
 @router.post("/scan_features")
 async def scan_features():
-    """扫描代码，提取各页面已有功能清单（两阶段：路由发现 → 逐页面深入）"""
+    """扫描代码，提取各页面已有功能清单（增量+并行：只扫有变更的项目，多进程并发）"""
     global _simulate_lock
 
     if not _cm or not _cm.channels:
@@ -757,75 +757,54 @@ async def scan_features():
 
     all_pages = []
     errors = []
+    skipped = []
 
     try:
-        proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
+        # 第 0 步：检测哪些项目有代码变更（增量扫描）
+        changed_projects = await _detect_changed_projects(ch)
+        if not changed_projects:
+            log.info("[scan_features] 所有项目无变更，跳过扫描")
+            await _notify_wecom("📊 **功能扫描跳过**\n\n所有项目自上次扫描以来无代码变更。")
+            return {"pages": [], "scan_summary": "所有项目无变更，跳过扫描", "skipped": [p["project"] for p in SCAN_PROJECTS]}
 
-        for project_config in SCAN_PROJECTS:
-            project_name = project_config["project"]
-            log.info("[scan_features] 第一阶段 - 发现路由: %s", project_name)
+        skipped = [p["project"] for p in SCAN_PROJECTS if p not in changed_projects]
+        log.info("[scan_features] 检测到 %d/%d 个项目有变更: %s",
+                 len(changed_projects), len(SCAN_PROJECTS),
+                 [p["project"] for p in changed_projects])
 
-            # 第一阶段：发现所有页面
-            route_prompt = _build_route_discovery_prompt(project_config)
-            route_reply = await proc.send(route_prompt, timeout=60)
+        # 第 1 步：并行扫描各项目（每个项目用独立 chatid 的 agent 进程）
+        scan_tasks = []
+        for i, project_config in enumerate(changed_projects):
+            scan_tasks.append(_scan_single_project(ch, project_config, i))
 
-            if not route_reply or not route_reply.strip():
-                errors.append(f"{project_name}: 路由发现无响应")
-                continue
+        # 并发执行所有项目扫描
+        results = await asyncio.gather(*scan_tasks, return_exceptions=True)
 
-            try:
-                route_result = _extract_json(route_reply)
-                pages = route_result.get("pages", [])
-            except (json.JSONDecodeError, ValueError):
-                errors.append(f"{project_name}: 路由发现 JSON 解析失败")
-                continue
-
-            if not pages:
-                errors.append(f"{project_name}: 未发现任何页面")
-                continue
-
-            log.info("[scan_features] %s 发现 %d 个页面，开始逐页面扫描", project_name, len(pages))
-
-            # 第二阶段：逐页面深入扫描
-            for page_info in pages:
-                page_name = page_info.get("name", "未知页面")
-                page_path = page_info.get("path", "")
-
-                if not page_path:
-                    continue
-
-                log.info("[scan_features] 扫描: %s - %s", project_name, page_name)
-                page_prompt = _build_page_scan_prompt(project_config, page_name, page_path)
-                page_reply = await proc.send(page_prompt, timeout=90)
-
-                if not page_reply or not page_reply.strip():
-                    errors.append(f"{project_name}/{page_name}: 无响应")
-                    continue
-
-                try:
-                    page_result = _extract_json(page_reply)
-                    page_result["page"] = page_name
-                    page_result["project"] = project_name
-                    page_result["platform"] = project_config["platform"]
-                    all_pages.append(page_result)
-                except (json.JSONDecodeError, ValueError):
-                    errors.append(f"{project_name}/{page_name}: JSON 解析失败")
-
-                await asyncio.sleep(0.5)
-
-            await asyncio.sleep(1)
+        for i, result in enumerate(results):
+            project_name = changed_projects[i]["project"]
+            if isinstance(result, Exception):
+                errors.append(f"{project_name}: 异常 {result}")
+                log.error("[scan_features] %s 扫描异常: %s", project_name, result)
+            elif isinstance(result, dict):
+                if result.get("pages"):
+                    all_pages.extend(result["pages"])
+                if result.get("errors"):
+                    errors.extend(result["errors"])
 
         total_features = sum(len(p.get("features", [])) for p in all_pages)
         result = {
             "pages": all_pages,
-            "scan_summary": f"共扫描{len(SCAN_PROJECTS)}个项目、{len(all_pages)}个页面，发现{total_features}个功能点",
+            "scan_summary": f"增量扫描{len(changed_projects)}个项目（跳过{len(skipped)}个无变更）、{len(all_pages)}个页面，发现{total_features}个功能点",
         }
+        if skipped:
+            result["skipped"] = skipped
         if errors:
             result["errors"] = errors
 
         # 推送企微通知
-        msg = f"📊 **功能扫描完成**\n\n"
-        msg += f"✅ 扫描项目: {len(SCAN_PROJECTS)} 个\n"
+        msg = f"📊 **功能扫描完成（增量+并行）**\n\n"
+        msg += f"✅ 扫描项目: {len(changed_projects)} 个\n"
+        msg += f"⏭️ 跳过(无变更): {len(skipped)} 个\n"
         msg += f"✅ 发现页面: {len(all_pages)} 个\n"
         msg += f"✅ 功能点: {total_features} 个\n"
         if errors:
@@ -843,9 +822,145 @@ async def scan_features():
         _simulate_lock = False
 
 
+async def _detect_changed_projects(ch) -> list:
+    """检测哪些项目自上次扫描以来有代码变更（基于 git log）
+    
+    策略：检查项目 src/ 目录最近 24 小时是否有新 commit
+    如果 git 命令失败（如目录不存在），视为有变更（保守策略）
+    """
+    changed = []
+    # 用一个临时 agent 进程批量检测
+    proc = await ch.pool.get_or_create(LAB_CHATID, cwd=LAB_CWD, mode="full")
+
+    # 构建批量检测命令
+    check_commands = []
+    for p in SCAN_PROJECTS:
+        base = p["base_path"]
+        check_commands.append(f'echo "---{p["project"]}---"; cd {base} 2>/dev/null && git log --oneline --since="24 hours ago" --name-only -- . 2>/dev/null | head -5 || echo "NO_GIT"')
+
+    batch_cmd = " ; ".join(check_commands)
+    prompt = f"""[lab-check-changes]: 请执行以下命令，检查各项目最近 24 小时是否有代码变更：
+
+```bash
+{batch_cmd}
+```
+
+直接执行命令，把完整输出原样返回给我，不要做任何解析或总结。"""
+
+    try:
+        reply = await proc.send(prompt, timeout=60)
+        if not reply:
+            # 检测失败，保守策略：全部扫描
+            log.warning("[detect_changes] agent 无响应，全部项目纳入扫描")
+            return list(SCAN_PROJECTS)
+
+        # 解析输出，判断每个项目是否有变更
+        for p in SCAN_PROJECTS:
+            marker = f"---{p['project']}---"
+            idx = reply.find(marker)
+            if idx == -1:
+                # 找不到标记，保守策略：纳入扫描
+                changed.append(p)
+                continue
+
+            # 取该项目到下一个项目之间的输出
+            next_markers = [f"---{pp['project']}---" for pp in SCAN_PROJECTS if pp != p]
+            end_idx = len(reply)
+            for nm in next_markers:
+                ni = reply.find(nm, idx + len(marker))
+                if ni != -1 and ni < end_idx:
+                    end_idx = ni
+
+            section = reply[idx + len(marker):end_idx].strip()
+
+            # 判断是否有变更
+            if "NO_GIT" in section:
+                # git 不可用，保守纳入
+                changed.append(p)
+            elif section and section not in ("", "\n"):
+                # 有 git log 输出 = 有变更
+                lines = [l for l in section.split("\n") if l.strip() and not l.startswith("$")]
+                if lines:
+                    changed.append(p)
+                    log.info("[detect_changes] %s 有变更: %s", p["project"], lines[0][:60])
+            # else: 无输出 = 无变更，跳过
+
+    except Exception as e:
+        log.warning("[detect_changes] 检测异常: %s，全部项目纳入扫描", e)
+        return list(SCAN_PROJECTS)
+
+    return changed
+
+
+async def _scan_single_project(ch, project_config: dict, index: int) -> dict:
+    """扫描单个项目（使用独立 chatid 的 agent 进程实现并行）
+    
+    每个项目分配独立的 chatid: _lab_scan_{index}
+    这样多个项目可以同时用不同的 agent 进程并行扫描
+    """
+    project_name = project_config["project"]
+    chatid = f"_lab_scan_{index}"
+    pages = []
+    errors = []
+
+    try:
+        proc = await ch.pool.get_or_create(chatid, cwd=LAB_CWD, mode="full")
+
+        # 第一阶段：发现路由
+        log.info("[scan_features] 并行扫描 %s (chatid=%s)", project_name, chatid)
+        route_prompt = _build_route_discovery_prompt(project_config)
+        route_reply = await proc.send(route_prompt, timeout=60)
+
+        if not route_reply or not route_reply.strip():
+            return {"pages": [], "errors": [f"{project_name}: 路由发现无响应"]}
+
+        try:
+            route_result = _extract_json(route_reply)
+            discovered_pages = route_result.get("pages", [])
+        except (json.JSONDecodeError, ValueError):
+            return {"pages": [], "errors": [f"{project_name}: 路由发现 JSON 解析失败"]}
+
+        if not discovered_pages:
+            return {"pages": [], "errors": [f"{project_name}: 未发现任何页面"]}
+
+        log.info("[scan_features] %s 发现 %d 个页面", project_name, len(discovered_pages))
+
+        # 第二阶段：逐页面深入扫描
+        for page_info in discovered_pages:
+            page_name = page_info.get("name", "未知页面")
+            page_path = page_info.get("path", "")
+
+            if not page_path:
+                continue
+
+            page_prompt = _build_page_scan_prompt(project_config, page_name, page_path)
+            page_reply = await proc.send(page_prompt, timeout=90)
+
+            if not page_reply or not page_reply.strip():
+                errors.append(f"{project_name}/{page_name}: 无响应")
+                continue
+
+            try:
+                page_result = _extract_json(page_reply)
+                page_result["page"] = page_name
+                page_result["project"] = project_name
+                page_result["platform"] = project_config["platform"]
+                pages.append(page_result)
+            except (json.JSONDecodeError, ValueError):
+                errors.append(f"{project_name}/{page_name}: JSON 解析失败")
+
+            await asyncio.sleep(0.3)
+
+        return {"pages": pages, "errors": errors if errors else None}
+
+    except Exception as e:
+        log.error("[scan_features] %s 扫描异常: %s", project_name, e)
+        return {"pages": [], "errors": [f"{project_name}: {str(e)}"]}
+
+
 @router.post("/scan_competitors")
 async def scan_competitors():
-    """搜索竞品最新功能和动态（逐竞品深入扫描）"""
+    """搜索竞品最新功能和动态（逐竞品并行扫描，使用独立 chatid）"""
     global _simulate_lock
 
     if not _cm or not _cm.channels:
@@ -861,48 +976,32 @@ async def scan_competitors():
     errors = []
 
     try:
-        proc = await ch.pool.get_or_create(LAB_COMPETITOR_CHATID, cwd=LAB_CWD, mode="full")
+        # 并行扫描各竞品（每个竞品用独立 chatid）
+        scan_tasks = []
+        for i, competitor in enumerate(COMPETITORS):
+            scan_tasks.append(_scan_single_competitor(ch, competitor, i))
 
-        for competitor in COMPETITORS:
-            comp_name = competitor["name"]
-            log.info("[scan_competitors] 开始扫描竞品: %s", comp_name)
+        results = await asyncio.gather(*scan_tasks, return_exceptions=True)
 
-            prompt = _build_competitor_scan_prompt(competitor)
-            reply = await proc.send(prompt, timeout=180)
-
-            if not reply or not reply.strip():
-                errors.append(f"{comp_name}: Agent 无响应")
-                continue
-
-            try:
-                comp_result = _extract_json(reply)
-                comp_result["name"] = comp_name
-                all_competitors.append(comp_result)
-                feature_count = sum(
-                    len(page.get("features", []))
-                    for page in comp_result.get("core_features", [])
-                )
-                unique_count = len(comp_result.get("unique_features", []))
-                log.info("[scan_competitors] %s 完成: %d 核心功能, %d 差异化功能",
-                         comp_name, feature_count, unique_count)
-            except (json.JSONDecodeError, ValueError) as e:
-                errors.append(f"{comp_name}: JSON 解析失败")
-                log.warning("[scan_competitors] %s 解析失败, reply前200字: %s", comp_name, reply[:200])
-
-            await asyncio.sleep(1)
+        for i, result in enumerate(results):
+            comp_name = COMPETITORS[i]["name"]
+            if isinstance(result, Exception):
+                errors.append(f"{comp_name}: 异常 {result}")
+            elif isinstance(result, dict):
+                if result.get("data"):
+                    all_competitors.append(result["data"])
+                if result.get("error"):
+                    errors.append(f"{comp_name}: {result['error']}")
 
         result = {
             "competitors": all_competitors,
-            "scan_summary": f"共扫描{len(all_competitors)}个竞品",
+            "scan_summary": f"并行扫描{len(all_competitors)}个竞品",
         }
         if errors:
             result["errors"] = errors
-            # 返回最后一个失败的原始回复（调试用）
-            if reply:
-                result["last_raw_reply"] = reply[:500]
 
         # 推送企微通知
-        msg = f"📊 **竞品扫描完成**\n\n"
+        msg = f"📊 **竞品扫描完成（并行）**\n\n"
         msg += f"✅ 成功: {len(all_competitors)} 个竞品\n"
         for comp in all_competitors:
             feature_count = sum(len(p.get("features", [])) for p in comp.get("core_features", []))
@@ -921,3 +1020,28 @@ async def scan_competitors():
         return {"error": str(e)}
     finally:
         _simulate_lock = False
+
+
+async def _scan_single_competitor(ch, competitor: dict, index: int) -> dict:
+    """扫描单个竞品（使用独立 chatid 实现并行）"""
+    comp_name = competitor["name"]
+    chatid = f"_lab_competitor_{index}"
+
+    try:
+        proc = await ch.pool.get_or_create(chatid, cwd=LAB_CWD, mode="full")
+        prompt = _build_competitor_scan_prompt(competitor)
+        reply = await proc.send(prompt, timeout=180)
+
+        if not reply or not reply.strip():
+            return {"data": None, "error": "Agent 无响应"}
+
+        try:
+            comp_result = _extract_json(reply)
+            comp_result["name"] = comp_name
+            return {"data": comp_result, "error": None}
+        except (json.JSONDecodeError, ValueError):
+            return {"data": None, "error": "JSON 解析失败"}
+
+    except Exception as e:
+        log.error("[scan_competitors] %s 异常: %s", comp_name, e)
+        return {"data": None, "error": str(e)}
